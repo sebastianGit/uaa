@@ -12,8 +12,8 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.http.client.HttpClient;
 import org.apache.http.impl.client.HttpClientBuilder;
 import org.cloudfoundry.identity.uaa.test.TestProfileEnvironment;
@@ -42,12 +42,13 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriUtils;
 
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
 import java.net.Socket;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.HashMap;
 import java.util.Map;
+
+import static org.junit.Assert.assertTrue;
 
 /**
  * <p>
@@ -76,7 +77,7 @@ import java.util.Map;
  */
 public class ServerRunning implements MethodRule, RestTemplateHolder, UrlHelper {
 
-    private static Log logger = LogFactory.getLog(ServerRunning.class);
+    private static Logger logger = LoggerFactory.getLogger(ServerRunning.class);
 
     private Environment environment;
 
@@ -152,8 +153,7 @@ public class ServerRunning implements MethodRule, RestTemplateHolder, UrlHelper 
 
     @Override
     public Statement apply(Statement statement, FrameworkMethod frameworkMethod, Object o) {
-        Assume.assumeTrue("Test ignored as the server cannot be reached at " + hostName + ":" + port,
-                integrationTest || getStatus());
+        assertTrue("Test could not reach the server at " + hostName + ":" + port, getStatus());
         return statement;
     }
 
@@ -232,6 +232,14 @@ public class ServerRunning implements MethodRule, RestTemplateHolder, UrlHelper 
             headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
         }
         return client.exchange(getUrl(path), HttpMethod.POST, new HttpEntity<>(formData, headers), Map.class);
+    }
+
+    @SuppressWarnings("rawtypes")
+    public ResponseEntity<Map> postForMap(String path, String requestBody, HttpHeaders headers) {
+        if (headers.getContentType() == null) {
+            headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+        }
+        return client.exchange(getUrl(path), HttpMethod.POST, new HttpEntity<>(requestBody, headers), Map.class);
     }
 
     public ResponseEntity<String> getForString(String path) {
@@ -370,9 +378,6 @@ public class ServerRunning implements MethodRule, RestTemplateHolder, UrlHelper 
                     }
                 }
                 return new URI(builder.toString());
-            } catch (UnsupportedEncodingException ex) {
-                // should not happen, UTF-8 is always supported
-                throw new IllegalStateException(ex);
             } catch (URISyntaxException ex) {
                 throw new IllegalArgumentException("Could not create URI from [" + builder + "]: " + ex, ex);
             }

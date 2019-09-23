@@ -1,182 +1,108 @@
-/*******************************************************************************
- *     Cloud Foundry
- *     Copyright (c) [2009-2016] Pivotal Software, Inc. All Rights Reserved.
- *
- *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
- *     You may not use this product except in compliance with the License.
- *
- *     This product includes a number of subcomponents with
- *     separate copyright notices and license terms. Your use of these
- *     subcomponents is subject to the terms and conditions of the
- *     subcomponent's license, as noted in the LICENSE file.
- *******************************************************************************/
 package org.cloudfoundry.identity.uaa.client;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.cloudfoundry.identity.uaa.audit.event.EntityDeletedEvent;
+import org.cloudfoundry.identity.uaa.authentication.SystemAuthentication;
 import org.cloudfoundry.identity.uaa.oauth.client.ClientConstants;
 import org.cloudfoundry.identity.uaa.user.UaaAuthority;
+import org.cloudfoundry.identity.uaa.zone.MultitenantClientServices;
+import org.cloudfoundry.identity.uaa.zone.IdentityZone;
 import org.springframework.beans.factory.InitializingBean;
+import org.springframework.context.ApplicationEvent;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.ApplicationEventPublisherAware;
+import org.springframework.context.ApplicationListener;
+import org.springframework.context.event.ContextRefreshedEvent;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.provider.ClientAlreadyExistsException;
 import org.springframework.security.oauth2.provider.ClientDetails;
-import org.springframework.security.oauth2.provider.ClientDetailsService;
-import org.springframework.security.oauth2.provider.ClientRegistrationService;
+import org.springframework.security.oauth2.provider.NoSuchClientException;
 import org.springframework.security.oauth2.provider.client.BaseClientDetails;
 import org.springframework.util.StringUtils;
 
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
-public class ClientAdminBootstrap implements InitializingBean {
+import static java.util.Optional.ofNullable;
+import static org.cloudfoundry.identity.uaa.oauth.token.TokenConstants.*;
 
-    private static Log logger = LogFactory.getLog(ClientAdminBootstrap.class);
+public class ClientAdminBootstrap implements
+        InitializingBean,
+        ApplicationListener<ContextRefreshedEvent>,
+        ApplicationEventPublisherAware {
 
-    private Map<String, Map<String, Object>> clients = new HashMap<String, Map<String, Object>>();
-
-    private Collection<String> autoApproveClients = Collections.emptySet();
-
-    private ClientRegistrationService clientRegistrationService;
-
-    private ClientMetadataProvisioning clientMetadataProvisioning;
-
-    private String domain = "cloudfoundry\\.com";
-
-    private boolean defaultOverride = true;
+    private static Logger logger = LoggerFactory.getLogger(ClientAdminBootstrap.class);
 
     private final PasswordEncoder passwordEncoder;
+    private final MultitenantClientServices clientRegistrationService;
+    private final ClientMetadataProvisioning clientMetadataProvisioning;
+    private ApplicationEventPublisher publisher;
 
-    public ClientAdminBootstrap(PasswordEncoder passwordEncoder) {
+    private final Map<String, Map<String, Object>> clients;
+    private final Set<String> clientsToDelete;
+    private final JdbcTemplate jdbcTemplate;
+    private final Set<String> autoApproveClients;
+    private final boolean defaultOverride;
+
+    /**
+     * @param defaultOverride    the default override flag to set. Flag to indicate
+     *                           that client details should override existing values
+     *                           by default. If true and the override flag is not
+     *                           set in the client details input then the details
+     *                           will override any existing details with the same id.
+     * @param clients            the clients to set
+     * @param autoApproveClients A set of client ids that are unconditionally to be
+     *                           autoapproved (independent of the settings in the
+     *                           client details map). These clients will have
+     *                           <code>autoapprove=true</code> when they are inserted
+     *                           into the client details store.
+     */
+    ClientAdminBootstrap(
+            final PasswordEncoder passwordEncoder,
+            final MultitenantClientServices clientRegistrationService,
+            final ClientMetadataProvisioning clientMetadataProvisioning,
+            final boolean defaultOverride,
+            final Map<String, Map<String, Object>> clients,
+            final Collection<String> autoApproveClients,
+            final Collection<String> clientsToDelete,
+            final JdbcTemplate jdbcTemplate) {
         this.passwordEncoder = passwordEncoder;
-    }
-
-    /**
-     * Flag to indicate that client details should override existing values by
-     * default. If true and the override flag is
-     * not set in the client details input then the details will override any
-     * existing details with the same id.
-     *
-     * @param defaultOverride the default override flag to set (default true, so
-     *            flag does not have to be provided
-     *            explicitly)
-     */
-    public void setDefaultOverride(boolean defaultOverride) {
-        this.defaultOverride = defaultOverride;
-    }
-
-    /**
-     * The domain suffix (default "cloudfoundry.com") used to detect http
-     * redirects. If an http callback in this domain
-     * is found in a client registration and there is no corresponding value
-     * with https as well, then the https value
-     * will be added.
-     *
-     * @param domain the domain to set
-     */
-    public void setDomain(String domain) {
-        this.domain = domain.replace(".", "\\.");
-    }
-
-    public PasswordEncoder getPasswordEncoder() {
-        return passwordEncoder;
-    }
-
-    /**
-     * @param clients the clients to set
-     */
-    public void setClients(Map<String, Map<String, Object>> clients) {
-        if (clients == null) {
-            this.clients = Collections.emptyMap();
-        } else {
-            this.clients = new HashMap<>(clients);
-        }
-    }
-
-    /**
-     * A set of client ids that are unconditionally to be autoapproved
-     * (independent of the settings in the client
-     * details map). These clients will have <code>autoapprove=true</code> when
-     * they are inserted into the client
-     * details store.
-     *
-     * @param autoApproveClients the auto approve clients
-     */
-    public void setAutoApproveClients(Collection<String> autoApproveClients) {
-        this.autoApproveClients = autoApproveClients;
-    }
-
-    /**
-     * @param clientRegistrationService the clientRegistrationService to set
-     */
-    public void setClientRegistrationService(ClientRegistrationService clientRegistrationService) {
         this.clientRegistrationService = clientRegistrationService;
+        this.clientMetadataProvisioning = clientMetadataProvisioning;
+        this.defaultOverride = defaultOverride;
+        this.clients = ofNullable(clients).orElse(Collections.emptyMap());
+        this.autoApproveClients = new HashSet<>(ofNullable(autoApproveClients).orElse(Collections.emptySet()));
+        this.clientsToDelete = new HashSet<>(ofNullable(clientsToDelete).orElse(Collections.emptySet()));
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @Override
     public void afterPropertiesSet() throws Exception {
-        addHttpsCallbacks();
         addNewClients();
-        updateAutoApprovClients();
+        updateAutoApproveClients();
     }
 
     /**
      * Explicitly override autoapprove in all clients that were provided in the
      * whitelist.
      */
-    private void updateAutoApprovClients() {
-
-        List<ClientDetails> clients = clientRegistrationService.listClientDetails();
-
-        for (ClientDetails client : clients) {
-            if (!autoApproveClients.contains(client.getClientId())) {
-                continue;
+    private void updateAutoApproveClients() {
+        autoApproveClients.removeAll(clientsToDelete);
+        for (String clientId : autoApproveClients) {
+            try {
+                BaseClientDetails base = (BaseClientDetails) clientRegistrationService.loadClientByClientId(clientId, IdentityZone.getUaaZoneId());
+                base.addAdditionalInformation(ClientConstants.AUTO_APPROVE, true);
+                logger.debug("Adding autoapprove flag to client: " + clientId);
+                clientRegistrationService.updateClientDetails(base, IdentityZone.getUaaZoneId());
+            } catch (NoSuchClientException n) {
+                logger.debug("Client not found, unable to set autoapprove: " + clientId);
             }
-            BaseClientDetails base = new BaseClientDetails(client);
-            Map<String, Object> info = new HashMap<String, Object>(client.getAdditionalInformation());
-            info.put(ClientConstants.AUTO_APPROVE, true);
-            base.setAdditionalInformation(info);
-            logger.debug("Adding autoapprove flag: " + base);
-            clientRegistrationService.updateClientDetails(base);
-        }
-
-    }
-
-    /**
-     * Make sure all cloudfoundry.com callbacks are https
-     */
-    private void addHttpsCallbacks() {
-        List<ClientDetails> clients = clientRegistrationService.listClientDetails();
-
-        for (ClientDetails client : clients) {
-            Set<String> registeredRedirectUri = client.getRegisteredRedirectUri();
-            if (registeredRedirectUri == null || registeredRedirectUri.isEmpty()) {
-                continue;
-            }
-            Set<String> uris = new HashSet<String>(registeredRedirectUri);
-            boolean newItems = false;
-            for (String uri : registeredRedirectUri) {
-                if (uri.matches("^http://[^/]*\\." + domain + ".*")) {
-                    newItems = true;
-                    uris.remove(uri);
-                    uris.add("https" + uri.substring("http".length()));
-                }
-            }
-            if (!newItems) {
-                continue;
-            }
-            BaseClientDetails newClient = new BaseClientDetails(client);
-            newClient.setRegisteredRedirectUri(uris);
-            logger.debug("Adding https callback: " + newClient);
-            clientRegistrationService.updateClientDetails(newClient);
         }
     }
 
@@ -191,23 +117,31 @@ public class ClientAdminBootstrap implements InitializingBean {
         if (map.get("change_email_redirect_url") != null) {
             redirectUris.add((String) map.get("change_email_redirect_url"));
         }
-        return StringUtils.arrayToCommaDelimitedString(redirectUris.toArray(new String[] {}));
+        return StringUtils.arrayToCommaDelimitedString(redirectUris.toArray(new String[]{}));
     }
 
-    private void addNewClients() throws Exception {
-        for (Map.Entry<String, Map<String, Object>> entry : clients.entrySet()) {
+    private void addNewClients() {
+        Set<Map.Entry<String, Map<String, Object>>> entries = clients.entrySet();
+        entries.removeIf(entry -> clientsToDelete.contains(entry.getKey()));
+        for (Map.Entry<String, Map<String, Object>> entry : entries) {
             String clientId = entry.getKey();
+
             Map<String, Object> map = entry.getValue();
+            if (map.get("authorized-grant-types") == null) {
+                throw new InvalidClientDetailsException("Client must have at least one authorized-grant-type. client ID: " + clientId);
+            }
             BaseClientDetails client = new BaseClientDetails(clientId, (String) map.get("resource-ids"),
-                (String) map.get("scope"), (String) map.get("authorized-grant-types"),
-                (String) map.get("authorities"), getRedirectUris(map));
-            client.setClientSecret((String) map.get("secret"));
+                    (String) map.get("scope"), (String) map.get("authorized-grant-types"),
+                    (String) map.get("authorities"), getRedirectUris(map));
+
+            client.setClientSecret(map.get("secret") == null ? "" : (String) map.get("secret"));
+
             Integer validity = (Integer) map.get("access-token-validity");
             Boolean override = (Boolean) map.get("override");
             if (override == null) {
                 override = defaultOverride;
             }
-            Map<String, Object> info = new HashMap<String, Object>(map);
+            Map<String, Object> info = new HashMap<>(map);
             if (validity != null) {
                 client.setAccessTokenValiditySeconds(validity);
             }
@@ -223,33 +157,48 @@ public class ClientAdminBootstrap implements InitializingBean {
             if (client.getAuthorities().isEmpty()) {
                 client.setAuthorities(Collections.singleton(UaaAuthority.UAA_NONE));
             }
-            if (client.getAuthorizedGrantTypes().contains("authorization_code")) {
-                client.getAuthorizedGrantTypes().add("refresh_token");
+            if (client.getAuthorizedGrantTypes().contains(GRANT_TYPE_AUTHORIZATION_CODE)) {
+                client.getAuthorizedGrantTypes().add(GRANT_TYPE_REFRESH_TOKEN);
             }
             for (String key : Arrays.asList("resource-ids", "scope", "authorized-grant-types", "authorities",
-                            "redirect-uri", "secret", "id", "override", "access-token-validity",
-                            "refresh-token-validity","show-on-homepage","app-launch-url","app-icon")) {
+                    "redirect-uri", "secret", "id", "override", "access-token-validity",
+                    "refresh-token-validity", "show-on-homepage", "app-launch-url", "app-icon")) {
                 info.remove(key);
             }
 
             client.setAdditionalInformation(info);
             try {
-                clientRegistrationService.addClientDetails(client);
+                clientRegistrationService.addClientDetails(client, IdentityZone.getUaaZoneId());
             } catch (ClientAlreadyExistsException e) {
-                if (override == null || override) {
+                if (override) {
                     logger.debug("Overriding client details for " + clientId);
-                    clientRegistrationService.updateClientDetails(client);
-                    if (StringUtils.hasText(client.getClientSecret()) && didPasswordChange(clientId, client.getClientSecret())) {
-                        clientRegistrationService.updateClientSecret(clientId, client.getClientSecret());
+                    clientRegistrationService.updateClientDetails(client, IdentityZone.getUaaZoneId());
+                    if (didPasswordChange(clientId, client.getClientSecret())) {
+                        clientRegistrationService.updateClientSecret(clientId, client.getClientSecret(), IdentityZone.getUaaZoneId());
                     }
                 } else {
                     // ignore it
                     logger.debug(e.getMessage());
                 }
             }
+
+            if (map.containsKey("use-bcrypt-prefix") && "true".equals(map.get("use-bcrypt-prefix"))) {
+                jdbcTemplate.update("update oauth_client_details set client_secret=concat(?, client_secret) where client_id = ?", "{bcrypt}", clientId);
+            }
+
+            for (String s : Arrays.asList(GRANT_TYPE_AUTHORIZATION_CODE, GRANT_TYPE_IMPLICIT)) {
+                if (client.getAuthorizedGrantTypes().contains(s) && isMissingRedirectUris(client)) {
+                    throw new InvalidClientDetailsException(s + " grant type requires at least one redirect URL. ClientID: " + client.getClientId());
+                }
+            }
+
             ClientMetadata clientMetadata = buildClientMetadata(map, clientId);
-            clientMetadataProvisioning.update(clientMetadata);
+            clientMetadataProvisioning.update(clientMetadata, IdentityZone.getUaaZoneId());
         }
+    }
+
+    private boolean isMissingRedirectUris(BaseClientDetails client) {
+        return client.getRegisteredRedirectUri() == null || client.getRegisteredRedirectUri().isEmpty();
     }
 
     private ClientMetadata buildClientMetadata(Map<String, Object> map, String clientId) {
@@ -261,32 +210,50 @@ public class ClientAdminBootstrap implements InitializingBean {
 
         clientMetadata.setAppIcon(appIcon);
         clientMetadata.setShowOnHomePage(showOnHomepage != null && showOnHomepage);
-        if(StringUtils.hasText(appLaunchUrl)) {
+        if (StringUtils.hasText(appLaunchUrl)) {
             try {
                 clientMetadata.setAppLaunchUrl(new URL(appLaunchUrl));
             } catch (MalformedURLException e) {
-                logger.info(new ClientMetadataException("Invalid app-launch-url for client " + clientId, e, HttpStatus.INTERNAL_SERVER_ERROR));
+                logger.info("Client metadata exception", new ClientMetadataException("Invalid app-launch-url for client " + clientId, e, HttpStatus.INTERNAL_SERVER_ERROR));
             }
         }
 
         return clientMetadata;
     }
 
-    protected boolean didPasswordChange(String clientId, String rawPassword) {
-        if (getPasswordEncoder()!=null && clientRegistrationService instanceof ClientDetailsService) {
-            ClientDetails existing = ((ClientDetailsService)clientRegistrationService).loadClientByClientId(clientId);
+    private boolean didPasswordChange(String clientId, String rawPassword) {
+        if (passwordEncoder != null) {
+            ClientDetails existing = clientRegistrationService.loadClientByClientId(clientId, IdentityZone.getUaaZoneId());
             String existingPasswordHash = existing.getClientSecret();
-            return !getPasswordEncoder().matches(rawPassword, existingPasswordHash);
+            return !passwordEncoder.matches(rawPassword, existingPasswordHash);
         } else {
             return true;
         }
     }
 
-    public ClientMetadataProvisioning getClientMetadataProvisioning() {
-        return clientMetadataProvisioning;
+    @Override
+    public void onApplicationEvent(ContextRefreshedEvent ignored) {
+        Authentication auth = SystemAuthentication.SYSTEM_AUTHENTICATION;
+        for (String clientId : clientsToDelete) {
+            try {
+                ClientDetails client = clientRegistrationService.loadClientByClientId(clientId, IdentityZone.getUaaZoneId());
+                logger.debug("Deleting client from manifest:" + clientId);
+                EntityDeletedEvent<ClientDetails> delete = new EntityDeletedEvent<>(client, auth, IdentityZoneHolder.getCurrentZoneId());
+                publish(delete);
+            } catch (NoSuchClientException e) {
+                logger.debug("Ignoring delete for non existent client:" + clientId);
+            }
+        }
     }
 
-    public void setClientMetadataProvisioning(ClientMetadataProvisioning clientMetadataProvisioning) {
-        this.clientMetadataProvisioning = clientMetadataProvisioning;
+    @Override
+    public void setApplicationEventPublisher(ApplicationEventPublisher applicationEventPublisher) {
+        this.publisher = applicationEventPublisher;
+    }
+
+    public void publish(ApplicationEvent event) {
+        if (publisher != null) {
+            publisher.publishEvent(event);
+        }
     }
 }

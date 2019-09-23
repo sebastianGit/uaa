@@ -13,6 +13,9 @@
 package org.cloudfoundry.identity.uaa.provider.saml.idp;
 
 import org.cloudfoundry.identity.uaa.authentication.UaaPrincipal;
+import org.cloudfoundry.identity.uaa.scim.ScimUser;
+import org.cloudfoundry.identity.uaa.scim.jdbc.JdbcScimUserProvisioning;
+import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
 import org.joda.time.DateTime;
 import org.opensaml.Configuration;
 import org.opensaml.common.SAMLException;
@@ -58,12 +61,22 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.saml.context.SAMLMessageContext;
 import org.springframework.security.saml.websso.WebSSOProfileImpl;
+import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.Collections;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import static java.util.Optional.ofNullable;
+
 
 public class IdpWebSsoProfileImpl extends WebSSOProfileImpl implements IdpWebSsoProfile {
+
+    private JdbcSamlServiceProviderProvisioning samlServiceProviderProvisioning;
+    private JdbcScimUserProvisioning scimUserProvisioning;
 
     @Override
     public void sendResponse(Authentication authentication, SAMLMessageContext context, IdpWebSSOProfileOptions options)
@@ -75,10 +88,35 @@ public class IdpWebSsoProfileImpl extends WebSSOProfileImpl implements IdpWebSso
         sendMessage(context, false);
     }
 
+    public AuthnRequest buildIdpInitiatedAuthnRequest(String nameIDFormat,
+                                                      String spEntityID,
+                                                      String assertionUrl) {
+        @SuppressWarnings("unchecked")
+        SAMLObjectBuilder<AuthnRequest> builder = (SAMLObjectBuilder<AuthnRequest>) builderFactory
+            .getBuilder(AuthnRequest.DEFAULT_ELEMENT_NAME);
+        AuthnRequest request = builder.buildObject();
+        request.setVersion(SAMLVersion.VERSION_20);
+        request.setID(generateID());
+        request.setIssuer(getIssuer(spEntityID));
+        request.setVersion(SAMLVersion.VERSION_20);
+        request.setIssueInstant(new DateTime());
+        request.setID(null);
+        request.setAssertionConsumerServiceURL(assertionUrl);
+        if (null != nameIDFormat) {
+            NameID nameID = ((SAMLObjectBuilder<NameID>) builderFactory.getBuilder(NameID.DEFAULT_ELEMENT_NAME)).buildObject();
+            nameID.setFormat(nameIDFormat);
+            Subject subject = ((SAMLObjectBuilder<Subject>) builderFactory.getBuilder(Subject.DEFAULT_ELEMENT_NAME)).buildObject();
+            subject.setNameID(nameID);
+            request.setSubject(subject);
+        }
+        return request;
+    }
+
     @SuppressWarnings("unchecked")
     protected void buildResponse(Authentication authentication, SAMLMessageContext context,
             IdpWebSSOProfileOptions options)
-                    throws MetadataProviderException, SecurityException, MarshallingException, SignatureException {
+                    throws MetadataProviderException, SecurityException, MarshallingException, SignatureException,
+            SAMLException {
         IDPSSODescriptor idpDescriptor = (IDPSSODescriptor) context.getLocalEntityRoleMetadata();
         SPSSODescriptor spDescriptor = (SPSSODescriptor) context.getPeerEntityRoleMetadata();
         AuthnRequest authnRequest = (AuthnRequest) context.getInboundSAMLMessage();
@@ -93,19 +131,19 @@ public class IdpWebSsoProfileImpl extends WebSSOProfileImpl implements IdpWebSso
         if (options.isAssertionsSigned() || spDescriptor.getWantAssertionsSigned()) {
             signAssertion(assertion, context.getLocalSigningCredential());
         }
-        Response samlResponse = createResponse(context, assertionConsumerService, assertion);
+        Response samlResponse = createResponse(context, assertionConsumerService, assertion, authnRequest);
         context.setOutboundMessage(samlResponse);
         context.setOutboundSAMLMessage(samlResponse);
     }
 
     private Response createResponse(SAMLMessageContext context, AssertionConsumerService assertionConsumerService,
-            Assertion assertion) {
+            Assertion assertion, AuthnRequest authnRequest) {
         @SuppressWarnings("unchecked")
         SAMLObjectBuilder<Response> responseBuilder = (SAMLObjectBuilder<Response>) builderFactory
                 .getBuilder(Response.DEFAULT_ELEMENT_NAME);
         Response response = responseBuilder.buildObject();
 
-        buildCommonAttributes(context.getLocalEntityId(), response, assertionConsumerService);
+        buildCommonAttributes(context.getLocalEntityId(), response, assertionConsumerService, authnRequest);
 
         response.getAssertions().add(assertion);
 
@@ -113,10 +151,12 @@ public class IdpWebSsoProfileImpl extends WebSSOProfileImpl implements IdpWebSso
         return response;
     }
 
-    private void buildCommonAttributes(String localEntityId, Response response, Endpoint service) {
+    private void buildCommonAttributes(String localEntityId, Response response, Endpoint service,
+                                       AuthnRequest authnRequest) {
 
         response.setID(generateID());
         response.setIssuer(getIssuer(localEntityId));
+        response.setInResponseTo(authnRequest.getID());
         response.setVersion(SAMLVersion.VERSION_20);
         response.setIssueInstant(new DateTime());
 
@@ -126,7 +166,7 @@ public class IdpWebSsoProfileImpl extends WebSSOProfileImpl implements IdpWebSso
     }
 
     private Assertion buildAssertion(Authentication authentication, AuthnRequest authnRequest,
-            IdpWebSSOProfileOptions options, String audienceURI, String issuerEntityId) {
+            IdpWebSSOProfileOptions options, String audienceURI, String issuerEntityId) throws SAMLException{
         @SuppressWarnings("unchecked")
         SAMLObjectBuilder<Assertion> assertionBuilder = (SAMLObjectBuilder<Assertion>) builderFactory
                 .getBuilder(Assertion.DEFAULT_ELEMENT_NAME);
@@ -139,8 +179,8 @@ public class IdpWebSsoProfileImpl extends WebSSOProfileImpl implements IdpWebSso
         buildAssertionAuthnStatement(assertion);
         buildAssertionConditions(assertion, options.getAssertionTimeToLiveSeconds(), audienceURI);
         buildAssertionSubject(assertion, authnRequest, options.getAssertionTimeToLiveSeconds(),
-                authentication.getName());
-        buildAttributeStatement(assertion, authentication);
+                (UaaPrincipal) authentication.getPrincipal());
+        buildAttributeStatement(assertion, authentication, audienceURI);
 
         return assertion;
     }
@@ -192,7 +232,7 @@ public class IdpWebSsoProfileImpl extends WebSSOProfileImpl implements IdpWebSso
     }
 
     private void buildAssertionSubject(Assertion assertion, AuthnRequest authnRequest, int assertionTtlSeconds,
-            String nameIdStr) {
+            UaaPrincipal uaaPrincipal) throws SAMLException {
         @SuppressWarnings("unchecked")
         SAMLObjectBuilder<Subject> subjectBuilder = (SAMLObjectBuilder<Subject>) builderFactory
                 .getBuilder(Subject.DEFAULT_ELEMENT_NAME);
@@ -201,16 +241,39 @@ public class IdpWebSsoProfileImpl extends WebSSOProfileImpl implements IdpWebSso
         @SuppressWarnings("unchecked")
         SAMLObjectBuilder<NameID> nameIdBuilder = (SAMLObjectBuilder<NameID>) builderFactory
                 .getBuilder(NameID.DEFAULT_ELEMENT_NAME);
-        NameID nameId = nameIdBuilder.buildObject();
-        nameId.setValue(nameIdStr);
-        nameId.setFormat(NameIDType.UNSPECIFIED);
-        subject.setNameID(nameId);
+        NameID nameID = nameIdBuilder.buildObject();
+
+        String nameIDFormat = NameIDType.UNSPECIFIED;
+        String nameIdStr = uaaPrincipal.getName();
+        if(null != authnRequest.getSubject() && null != authnRequest.getSubject().getNameID()
+                && null != authnRequest.getSubject().getNameID().getFormat()){
+
+            nameIDFormat = authnRequest.getSubject().getNameID().getFormat();
+            switch (nameIDFormat) {
+                case NameIDType.EMAIL:
+                    nameIdStr = uaaPrincipal.getEmail();
+                    break;
+                case NameIDType.PERSISTENT:
+                    nameIdStr = uaaPrincipal.getId();
+                    break;
+                case NameIDType.UNSPECIFIED:
+                    nameIdStr = uaaPrincipal.getName();
+                    break;
+                default:
+                    throw new SAMLException("The NameIDType '" + nameIDFormat + "' is not supported.");
+            }
+        }
+
+        nameID.setValue(nameIdStr);
+        nameID.setFormat(nameIDFormat);
+        subject.setNameID(nameID);
 
         @SuppressWarnings("unchecked")
         SAMLObjectBuilder<SubjectConfirmation> subjectConfirmationBuilder = (SAMLObjectBuilder<SubjectConfirmation>) builderFactory
                 .getBuilder(SubjectConfirmation.DEFAULT_ELEMENT_NAME);
         SubjectConfirmation subjectConfirmation = subjectConfirmationBuilder.buildObject();
         subjectConfirmation.setMethod(SubjectConfirmation.METHOD_BEARER);
+
 
         @SuppressWarnings("unchecked")
         SAMLObjectBuilder<SubjectConfirmationData> subjectConfirmationDataBuilder = (SAMLObjectBuilder<SubjectConfirmationData>) builderFactory
@@ -225,7 +288,7 @@ public class IdpWebSsoProfileImpl extends WebSSOProfileImpl implements IdpWebSso
         assertion.setSubject(subject);
     }
 
-    private void buildAttributeStatement(Assertion assertion, Authentication authentication) {
+    protected void buildAttributeStatement(Assertion assertion, Authentication authentication, String providerEntityId) {
         @SuppressWarnings("unchecked")
         SAMLObjectBuilder<AttributeStatement> attributeStatementBuilder = (SAMLObjectBuilder<AttributeStatement>) builderFactory
                 .getBuilder(AttributeStatement.DEFAULT_ELEMENT_NAME);
@@ -239,16 +302,67 @@ public class IdpWebSsoProfileImpl extends WebSSOProfileImpl implements IdpWebSso
         attributeStatement.getAttributes().add(authoritiesAttribute);
 
         UaaPrincipal principal = (UaaPrincipal) authentication.getPrincipal();
-        Attribute emailAttribute = buildStringAttribute("email", Arrays.asList(new String[] { principal.getEmail() }));
+        Attribute emailAttribute = buildStringAttribute("email", Collections.singletonList(principal.getEmail()));
         attributeStatement.getAttributes().add(emailAttribute);
-        Attribute idAttribute = buildStringAttribute("id", Arrays.asList(new String[] { principal.getId() }));
+        Attribute idAttribute = buildStringAttribute("id", Collections.singletonList(principal.getId()));
         attributeStatement.getAttributes().add(idAttribute);
-        Attribute nameAttribute = buildStringAttribute("name", Arrays.asList(new String[] { principal.getName() }));
+        Attribute nameAttribute = buildStringAttribute("name", Collections.singletonList(principal.getName()));
         attributeStatement.getAttributes().add(nameAttribute);
-        Attribute originAttribute = buildStringAttribute("origin", Arrays.asList(new String[] { principal.getOrigin() }));
+        Attribute originAttribute = buildStringAttribute("origin", Collections.singletonList(principal.getOrigin()));
         attributeStatement.getAttributes().add(originAttribute);
-        Attribute zoneAttribute = buildStringAttribute("zoneId", Arrays.asList(new String[] { principal.getZoneId() }));
+        Attribute zoneAttribute = buildStringAttribute("zoneId", Collections.singletonList(principal.getZoneId()));
         attributeStatement.getAttributes().add(zoneAttribute);
+
+        SamlServiceProviderDefinition config = samlServiceProviderProvisioning.retrieveByEntityId(providerEntityId, IdentityZoneHolder.get().getId()).getConfig();
+
+        //static attributes
+        for (Map.Entry<String,Object> staticAttribute : (ofNullable(config.getStaticCustomAttributes()).orElse(Collections.emptyMap())).entrySet()) {
+            String name = staticAttribute.getKey();
+            Object value = staticAttribute.getValue();
+            if (value==null) {
+                continue;
+            }
+
+            List values = new LinkedList<>();
+            if (value instanceof List) {
+                values = (List) value;
+            } else {
+                values.add(value);
+            }
+
+            List<String> stringValues = (List) values.stream().map(s -> s==null ? "null" : s.toString()).collect(Collectors.toList());
+            attributeStatement.getAttributes().add(buildStringAttribute(name, stringValues));
+        }
+
+        Map<String, Object> attributeMappings = config.getAttributeMappings();
+
+        if (attributeMappings.size() > 0) {
+            ScimUser user = scimUserProvisioning.retrieve(principal.getId(), IdentityZoneHolder.get().getId());
+
+            String givenName = user.getGivenName();
+            if (StringUtils.hasText(givenName) && attributeMappings.containsKey("given_name")) {
+                Attribute givenNameAttribute = buildStringAttribute(attributeMappings.get("given_name").toString(), Collections.singletonList(givenName));
+                attributeStatement.getAttributes().add(givenNameAttribute);
+            }
+
+            String familyName = user.getFamilyName();
+            if (StringUtils.hasText(familyName) && attributeMappings.containsKey("family_name")) {
+                Attribute familyNameAttribute = buildStringAttribute(attributeMappings.get("family_name").toString(), Collections.singletonList(familyName));
+                attributeStatement.getAttributes().add(familyNameAttribute);
+            }
+
+            String phoneNumber = scimUserProvisioning.extractPhoneNumber(user);
+            if (StringUtils.hasText(phoneNumber) && attributeMappings.containsKey("phone_number")) {
+                Attribute phoneNumberAttribute = buildStringAttribute(attributeMappings.get("phone_number").toString(), Collections.singletonList(phoneNumber));
+                attributeStatement.getAttributes().add(phoneNumberAttribute);
+            }
+
+            String email = user.getPrimaryEmail();
+            if (StringUtils.hasText(email) && attributeMappings.containsKey("email")) {
+                Attribute customEmailAttribute = buildStringAttribute(attributeMappings.get("email").toString(), Collections.singletonList(email));
+                attributeStatement.getAttributes().add(customEmailAttribute);
+            }
+        }
 
         assertion.getAttributeStatements().add(attributeStatement);
     }
@@ -309,4 +423,11 @@ public class IdpWebSsoProfileImpl extends WebSSOProfileImpl implements IdpWebSso
         Signer.signObject(signature);
     }
 
+    public void setSamlServiceProviderProvisioning(JdbcSamlServiceProviderProvisioning samlServiceProviderProvisioning) {
+        this.samlServiceProviderProvisioning = samlServiceProviderProvisioning;
+    }
+
+    public void setScimUserProvisioning(JdbcScimUserProvisioning scimUserProvisioning) {
+        this.scimUserProvisioning = scimUserProvisioning;
+    }
 }

@@ -14,6 +14,7 @@
 
 package org.cloudfoundry.identity.uaa.authentication;
 
+import org.cloudfoundry.identity.uaa.zone.MultitenantClientServices;
 import org.cloudfoundry.identity.uaa.zone.IdentityZone;
 import org.cloudfoundry.identity.uaa.zone.IdentityZoneConfiguration;
 import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
@@ -22,15 +23,12 @@ import org.junit.Before;
 import org.junit.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
-import org.springframework.security.oauth2.provider.ClientDetailsService;
 import org.springframework.security.oauth2.provider.NoSuchClientException;
 import org.springframework.security.oauth2.provider.client.BaseClientDetails;
 
 import java.util.Arrays;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.oauth2.common.util.OAuth2Utils.CLIENT_ID;
@@ -41,7 +39,7 @@ public class ZoneAwareWhitelistLogoutHandlerTests {
     private MockHttpServletRequest request = new MockHttpServletRequest();
     private MockHttpServletResponse response = new MockHttpServletResponse();
     private BaseClientDetails client = new BaseClientDetails(CLIENT_ID, "", "", "", "", "http://*.testing.com,http://testing.com");
-    private ClientDetailsService clientDetailsService =  mock(ClientDetailsService.class);
+    private MultitenantClientServices clientDetailsService =  mock(MultitenantClientServices.class);
     private ZoneAwareWhitelistLogoutHandler handler;
     IdentityZoneConfiguration configuration = new IdentityZoneConfiguration();
     IdentityZoneConfiguration original;
@@ -54,7 +52,7 @@ public class ZoneAwareWhitelistLogoutHandlerTests {
             .setRedirectUrl("/login")
             .setDisableRedirectParameter(true)
             .setRedirectParameterName("redirect");
-        when(clientDetailsService.loadClientByClientId(CLIENT_ID)).thenReturn(client);
+        when(clientDetailsService.loadClientByClientId(CLIENT_ID, "uaa")).thenReturn(client);
         handler = new ZoneAwareWhitelistLogoutHandler(clientDetailsService);
         IdentityZoneHolder.get().setConfig(configuration);
     }
@@ -63,15 +61,6 @@ public class ZoneAwareWhitelistLogoutHandlerTests {
     public void tearDown() throws Exception {
         IdentityZoneHolder.clear();
         IdentityZone.getUaa().setConfig(original);
-    }
-
-    @Test
-    public void test_defaults() throws Exception {
-        WhitelistLogoutHandler whandler = handler.getZoneHandler();
-        assertNull(whandler.getWhitelist());
-        assertEquals("redirect", whandler.getTargetUrlParameter());
-        assertEquals("/login", whandler.getDefaultTargetUrl1());
-        assertTrue(whandler.isAlwaysUseDefaultTargetUrl());
     }
 
     @Test
@@ -100,13 +89,14 @@ public class ZoneAwareWhitelistLogoutHandlerTests {
     }
 
     @Test
-    public void test_allow_open_redirect() throws Exception {
+    public void test_open_redirect_no_longer_allowed() throws Exception {
         configuration.getLinks().getLogout().setWhitelist(null);
+        configuration.getLinks().getLogout().setRedirectUrl("/login");
         configuration.getLinks().getLogout().setDisableRedirectParameter(false);
         request.setParameter("redirect", "http://testing.com");
-        assertEquals("http://testing.com", handler.determineTargetUrl(request, response));
+        assertEquals("/login", handler.determineTargetUrl(request, response));
         request.setParameter("redirect", "http://www.testing.com");
-        assertEquals("http://www.testing.com", handler.determineTargetUrl(request, response));
+        assertEquals("/login", handler.determineTargetUrl(request, response));
     }
 
     @Test
@@ -136,7 +126,7 @@ public class ZoneAwareWhitelistLogoutHandlerTests {
 
     @Test
     public void client_not_found_exception() throws Exception {
-        when(clientDetailsService.loadClientByClientId("test")).thenThrow(new NoSuchClientException("test"));
+        when(clientDetailsService.loadClientByClientId("test", "uaa")).thenThrow(new NoSuchClientException("test"));
         configuration.getLinks().getLogout().setWhitelist(Arrays.asList("http://testing.com"));
         configuration.getLinks().getLogout().setDisableRedirectParameter(false);
         request.setParameter("redirect", "http://notwhitelisted.com");

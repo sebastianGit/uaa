@@ -19,6 +19,7 @@ import org.junit.Test;
 import org.springframework.util.MultiValueMap;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -40,8 +41,8 @@ public class LinkedMaskingMultiValueMapTests {
 
     @Before
     public void setUp() {
-        map = new LinkedMaskingMultiValueMap<String, String>("password");
-        objectMap = new LinkedMaskingMultiValueMap<Object, Object>("password");
+        map = new LinkedMaskingMultiValueMap<>("password");
+        objectMap = new LinkedMaskingMultiValueMap<>("password");
     }
 
     @Test
@@ -53,6 +54,29 @@ public class LinkedMaskingMultiValueMapTests {
         expected.add("value1");
         expected.add("value2");
         assertEquals(expected, map.get("key"));
+    }
+
+    @Test
+    public void addAll() {
+        map.add("key", "value1");
+        map.addAll("key", Arrays.asList("value2", "value3"));
+        assertEquals(1, map.size());
+        assertEquals(3, map.get("key").size());
+        assertEquals(Arrays.asList("value1", "value2", "value3"), map.get("key"));
+    }
+
+    @Test
+    public void addAllFromAnotherMultiValueMap() {
+        LinkedMaskingMultiValueMap<String, String> toCopy = new LinkedMaskingMultiValueMap<>();
+        toCopy.add("key1", "value1");
+        toCopy.add("key2", "value2");
+        map.add("key1", "existing value");
+        map.addAll(toCopy);
+        assertEquals(2, map.size());
+        assertEquals(2, map.get("key1").size());
+        assertEquals(Arrays.asList("existing value", "value1"), map.get("key1"));
+        assertEquals(1, map.get("key2").size());
+        assertEquals(Arrays.asList("value2"), map.get("key2"));
     }
 
     @Test
@@ -108,6 +132,23 @@ public class LinkedMaskingMultiValueMapTests {
         assertTrue(s.indexOf("password") >= 0);
         assertFalse(s.indexOf("password-value") >= 0);
         assertTrue(s.indexOf("PROTECTED") >= 0);
+    }
+
+    @Test
+    public void doNotPrintPasswordWhenArrayConstructorIsUsed() {
+        for (LinkedMaskingMultiValueMap<String,Object> map :
+            Arrays.asList(
+                new LinkedMaskingMultiValueMap<>("password", "code"),
+                new LinkedMaskingMultiValueMap<>(new String[] {"password", "code"}))) {
+            map.add("password", "password-value");
+            map.add("code", "code-value");
+            String s = map.toString();
+            assertTrue(s.indexOf("password") >= 0);
+            assertFalse(s.indexOf("password-value") >= 0);
+            assertTrue(s.indexOf("code") >= 0);
+            assertFalse(s.indexOf("code-value") >= 0);
+            assertTrue(s.indexOf("PROTECTED") >= 0);
+        }
     }
 
     @Test

@@ -1,24 +1,16 @@
-/*******************************************************************************
- * Cloud Foundry
- * Copyright (c) [2009-2016] Pivotal Software, Inc. All Rights Reserved.
- * <p>
- * This product is licensed to you under the Apache License, Version 2.0 (the "License").
- * You may not use this product except in compliance with the License.
- * <p>
- * This product includes a number of subcomponents with
- * separate copyright notices and license terms. Your use of these
- * subcomponents is subject to the terms and conditions of the
- * subcomponent's license, as noted in the LICENSE file.
- *******************************************************************************/
 package org.cloudfoundry.identity.uaa.user;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import org.cloudfoundry.identity.uaa.account.event.PasswordChangeEventPublisher;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.util.Assert;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
 import java.util.List;
-
-import org.springframework.security.core.GrantedAuthority;
-import org.springframework.util.Assert;
+import java.util.function.Consumer;
 
 /**
  * User data for authentication against UAA's internal authentication provider.
@@ -27,7 +19,54 @@ import org.springframework.util.Assert;
  * @author Dave Syer
  * @author Joel D'sa
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public class UaaUser {
+    static final String DEFAULT_EMAIL_DOMAIN = "this-default-was-not-configured.invalid";
+    static final String DEFAULT_USER_NAME = "unknown";
+
+    public static String emailFrom(String name) {
+        String email = name;
+
+        if (name.split("@").length != 2 || name.startsWith("@") || name.endsWith("@")) {
+            email = name.replaceAll("@", "") + "@" + DEFAULT_EMAIL_DOMAIN;
+        }
+
+        return email;
+    }
+
+    public static UaaUser createWithDefaults(Consumer<UaaUserPrototype> config) {
+        UaaUserPrototype prototype = new UaaUserPrototype();
+        config.accept(prototype);
+
+        if (prototype.getUsername() == null) {
+            prototype.withUsername(prototype.getEmail() != null ? prototype.getEmail() : DEFAULT_USER_NAME);
+        }
+
+        if (prototype.getEmail() == null) {
+            prototype.withEmail(emailFrom(prototype.getUsername()));
+        }
+
+        if (prototype.getGivenName() == null) {
+            prototype.withGivenName(prototype.getEmail().split("@")[0]);
+        }
+
+        if (prototype.getFamilyName() == null) {
+            String email = prototype.getEmail();
+            String familyName = (email.split("@").length > 1 ? email.split("@")[1] : email);
+            prototype.withFamilyName(familyName);
+        }
+
+        if (prototype.getCreated() == null) {
+            prototype.withCreated(new Date());
+        }
+
+        if (prototype.getModified() == null) {
+            prototype.withModified(prototype.getCreated());
+        }
+
+        return new UaaUser(prototype);
+    }
 
     private final String id;
 
@@ -55,6 +94,10 @@ public class UaaUser {
 
     private final String phoneNumber;
 
+    private Long lastLogonTime;
+
+    private Long previousLogonTime;
+
     public String getZoneId() {
         return zoneId;
     }
@@ -66,6 +109,8 @@ public class UaaUser {
     private boolean verified = false;
 
     private boolean legacyVerificationBehavior = false;
+
+    private boolean passwordChangeRequired;
 
     public UaaUser(String username, String password, String email, String givenName, String familyName) {
         this("NaN", username, password, email, UaaAuthority.USER_AUTHORITIES, givenName, familyName, new Date(),
@@ -122,6 +167,9 @@ public class UaaUser {
         this.passwordLastModified = prototype.getPasswordLastModified();
         this.phoneNumber = prototype.getPhoneNumber();
         this.legacyVerificationBehavior = prototype.isLegacyVerificationBehavior();
+        this.passwordChangeRequired = prototype.isPasswordChangeRequired();
+        this.lastLogonTime = prototype.getLastLogonTime();
+        this.previousLogonTime = prototype.getPreviousLogonTime();
     }
 
     public String getId() {
@@ -307,7 +355,11 @@ public class UaaUser {
                 .withPasswordLastModified(passwordLastModified));
     }
 
-    public UaaUser modifyAttributes(String email, String givenName, String familyName, String phoneNumber) {
+    public UaaUser modifyAttributes(String email,
+                                    String givenName,
+                                    String familyName,
+                                    String phoneNumber,
+                                    boolean verified) {
         return new UaaUser(new UaaUserPrototype()
                 .withEmail(email)
                 .withGivenName(givenName)
@@ -341,5 +393,29 @@ public class UaaUser {
 
     public boolean isLegacyVerificationBehavior() {
         return legacyVerificationBehavior;
+    }
+
+    public boolean isPasswordChangeRequired() {
+        return passwordChangeRequired;
+    }
+
+    public void setPasswordChangeRequired(boolean passwordChangeRequired) {
+        this.passwordChangeRequired = passwordChangeRequired;
+    }
+
+    public Long getLastLogonTime() {
+        return lastLogonTime;
+    }
+
+    public void setLastLogonTime(Long lastLogonTime) {
+        this.lastLogonTime = lastLogonTime;
+    }
+
+    public Long getPreviousLogonTime() {
+        return previousLogonTime;
+    }
+
+    public void setPreviousLogonTime(Long previousLogonTime) {
+        this.previousLogonTime = previousLogonTime;
     }
 }

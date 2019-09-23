@@ -25,18 +25,26 @@ import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
 
 import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.cloudfoundry.identity.uaa.constants.OriginKeys.LDAP;
+import static org.cloudfoundry.identity.uaa.provider.LdapIdentityProviderDefinition.LDAP_PROPERTY_TYPES;
+import static org.cloudfoundry.identity.uaa.provider.LdapIdentityProviderDefinition.LDAP_SSL_TLS;
+import static org.cloudfoundry.identity.uaa.provider.LdapIdentityProviderDefinition.LDAP_TLS_EXTERNAL;
+import static org.cloudfoundry.identity.uaa.provider.LdapIdentityProviderDefinition.LDAP_TLS_NONE;
+import static org.cloudfoundry.identity.uaa.provider.LdapIdentityProviderDefinition.LDAP_TLS_SIMPLE;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 public class LdapIdentityProviderDefinitionTest {
 
@@ -45,6 +53,69 @@ public class LdapIdentityProviderDefinitionTest {
     @Before
     public void setUp() throws Exception {
 
+    }
+
+    @Test
+    public void test_property_types() {
+        assertEquals(String.class, LDAP_PROPERTY_TYPES.get(LDAP_SSL_TLS));
+    }
+
+    @Test
+    public void test_default_tls_is_none() {
+        assertEquals(LDAP_TLS_NONE, new LdapIdentityProviderDefinition().getTlsConfiguration());
+    }
+
+    @Test
+    public void testEquals() {
+        LdapIdentityProviderDefinition ldapIdentityProviderDefinition1 = new LdapIdentityProviderDefinition();
+        ldapIdentityProviderDefinition1.setAddShadowUserOnLogin(true);
+        LdapIdentityProviderDefinition ldapIdentityProviderDefinition2 = new LdapIdentityProviderDefinition();
+        ldapIdentityProviderDefinition2.setAddShadowUserOnLogin(false);
+        assertNotEquals(ldapIdentityProviderDefinition1,ldapIdentityProviderDefinition2);
+
+        ldapIdentityProviderDefinition2.setAddShadowUserOnLogin(true);
+        assertEquals(ldapIdentityProviderDefinition1,ldapIdentityProviderDefinition2);
+    }
+
+    @Test
+    public void test_tls_options() {
+        ldapIdentityProviderDefinition = new LdapIdentityProviderDefinition();
+        ldapIdentityProviderDefinition.setTlsConfiguration(LDAP_TLS_NONE);
+        ldapIdentityProviderDefinition.setTlsConfiguration(LDAP_TLS_EXTERNAL);
+        ldapIdentityProviderDefinition.setTlsConfiguration(LDAP_TLS_SIMPLE);
+        ldapIdentityProviderDefinition.setTlsConfiguration(null);
+        assertEquals(LDAP_TLS_NONE, ldapIdentityProviderDefinition.getTlsConfiguration());
+        try {
+            String tlsConfiguration = "other string";
+            ldapIdentityProviderDefinition.setTlsConfiguration(tlsConfiguration);
+            fail(tlsConfiguration + " is not a valid TLS configuration option.");
+        } catch (IllegalArgumentException x) {}
+    }
+
+    @Test
+    public void test_serialization_of_tls_attribute() {
+        ldapIdentityProviderDefinition = LdapIdentityProviderDefinition.searchAndBindMapGroupToScopes(
+            "ldap://localhost:389/",
+            "cn=admin,ou=Users,dc=test,dc=com",
+            "adminsecret",
+            "dc=test,dc=com",
+            "cn={0}",
+            "ou=scopes,dc=test,dc=com",
+            "member={0}",
+            "mail",
+            null,
+            false,
+            true,
+            true,
+            100,
+            true);
+        ldapIdentityProviderDefinition.setTlsConfiguration(LDAP_TLS_SIMPLE);
+        String config = JsonUtils.writeValueAsString(ldapIdentityProviderDefinition);
+        LdapIdentityProviderDefinition deserialized = JsonUtils.readValue(config, LdapIdentityProviderDefinition.class);
+        assertEquals(LDAP_TLS_SIMPLE, deserialized.getTlsConfiguration());
+        config = config.replace(",\"tlsConfiguration\":\"simple\"", "");
+        deserialized = JsonUtils.readValue(config, LdapIdentityProviderDefinition.class);
+        assertEquals(LDAP_TLS_NONE, deserialized.getTlsConfiguration());
     }
 
     @Test
@@ -100,6 +171,10 @@ public class LdapIdentityProviderDefinitionTest {
         assertNotNull(environment.getProperty("ldap.ssl.skipverification"));
         assertEquals("true", environment.getProperty("ldap.ssl.skipverification"));
 
+        //tls configuration
+        assertNotNull(environment.getProperty("ldap.ssl.tls"));
+        assertEquals(LDAP_TLS_NONE, environment.getProperty("ldap.ssl.tls"));
+
         ldapIdentityProviderDefinition = LdapIdentityProviderDefinition.searchAndBindMapGroupToScopes(
             "ldap://localhost:389/",
             "cn=admin,ou=Users,dc=test,dc=com",
@@ -126,10 +201,10 @@ public class LdapIdentityProviderDefinitionTest {
     public Map<String,Object> getLdapConfig(String config) throws UnsupportedEncodingException {
         YamlMapFactoryBean factory = new YamlMapFactoryBean();
         factory.setResolutionMethod(YamlProcessor.ResolutionMethod.OVERRIDE_AND_IGNORE);
-        factory.setResources(new Resource[]{new ByteArrayResource(config.getBytes("UTF-8"))});
-        Map<String, Object> map = (Map<String, Object>) factory.getObject().get("ldap");
+        factory.setResources(new Resource[]{new ByteArrayResource(config.getBytes(StandardCharsets.UTF_8))});
+        Map<String, Object> map = (Map<String, Object>) factory.getObject().get(LDAP);
         Map<String, Object> result = new HashMap<>();
-        result.put("ldap", map);
+        result.put(LDAP, map);
         return UaaMapUtils.flatten(result);
     }
 

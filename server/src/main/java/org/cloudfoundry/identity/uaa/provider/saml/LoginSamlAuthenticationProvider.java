@@ -13,39 +13,33 @@
 package org.cloudfoundry.identity.uaa.provider.saml;
 
 
-import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang.StringUtils;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.cloudfoundry.identity.uaa.authentication.UaaAuthentication;
 import org.cloudfoundry.identity.uaa.authentication.UaaPrincipal;
-import org.cloudfoundry.identity.uaa.authentication.event.UserAuthenticationSuccessEvent;
+import org.cloudfoundry.identity.uaa.authentication.event.IdentityProviderAuthenticationSuccessEvent;
 import org.cloudfoundry.identity.uaa.authentication.manager.ExternalGroupAuthorizationEvent;
 import org.cloudfoundry.identity.uaa.authentication.manager.InvitedUserAuthenticatedEvent;
 import org.cloudfoundry.identity.uaa.authentication.manager.NewUserAuthenticatedEvent;
 import org.cloudfoundry.identity.uaa.constants.OriginKeys;
 import org.cloudfoundry.identity.uaa.provider.IdentityProvider;
+import org.cloudfoundry.identity.uaa.provider.IdentityProviderProvisioning;
 import org.cloudfoundry.identity.uaa.provider.SamlIdentityProviderDefinition;
 import org.cloudfoundry.identity.uaa.scim.ScimGroupExternalMember;
 import org.cloudfoundry.identity.uaa.scim.ScimGroupExternalMembershipManager;
 import org.cloudfoundry.identity.uaa.user.UaaUser;
 import org.cloudfoundry.identity.uaa.user.UaaUserDatabase;
-import org.cloudfoundry.identity.uaa.user.UaaUserPrototype;
-import org.cloudfoundry.identity.uaa.provider.IdentityProviderProvisioning;
+import org.cloudfoundry.identity.uaa.user.UserInfo;
+import org.cloudfoundry.identity.uaa.util.UaaUrlUtils;
+import org.cloudfoundry.identity.uaa.web.UaaSavedRequestAwareAuthenticationSuccessHandler;
 import org.cloudfoundry.identity.uaa.zone.IdentityZone;
-import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
+import org.cloudfoundry.identity.uaa.zone.beans.IdentityZoneManager;
 import org.joda.time.DateTime;
 import org.opensaml.saml2.core.Attribute;
+import org.opensaml.saml2.core.AuthnStatement;
 import org.opensaml.xml.XMLObject;
-import org.opensaml.xml.schema.XSAny;
-import org.opensaml.xml.schema.XSBase64Binary;
-import org.opensaml.xml.schema.XSBoolean;
-import org.opensaml.xml.schema.XSBooleanValue;
-import org.opensaml.xml.schema.XSDateTime;
-import org.opensaml.xml.schema.XSInteger;
-import org.opensaml.xml.schema.XSQName;
-import org.opensaml.xml.schema.XSString;
-import org.opensaml.xml.schema.XSURI;
+import org.opensaml.xml.schema.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.ApplicationEventPublisherAware;
@@ -69,29 +63,28 @@ import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 
 import javax.xml.namespace.QName;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashSet;
-import java.util.LinkedList;
-import java.util.List;
+import java.util.*;
 import java.util.Map.Entry;
-import java.util.Set;
 import java.util.stream.Collectors;
 
-import static org.cloudfoundry.identity.uaa.provider.ExternalIdentityProviderDefinition.EMAIL_ATTRIBUTE_NAME;
-import static org.cloudfoundry.identity.uaa.provider.ExternalIdentityProviderDefinition.FAMILY_NAME_ATTRIBUTE_NAME;
-import static org.cloudfoundry.identity.uaa.provider.ExternalIdentityProviderDefinition.GIVEN_NAME_ATTRIBUTE_NAME;
-import static org.cloudfoundry.identity.uaa.provider.ExternalIdentityProviderDefinition.GROUP_ATTRIBUTE_NAME;
-import static org.cloudfoundry.identity.uaa.provider.ExternalIdentityProviderDefinition.PHONE_NUMBER_ATTRIBUTE_NAME;
+import static java.util.Optional.of;
+import static org.cloudfoundry.identity.uaa.constants.OriginKeys.NotANumber;
+import static org.cloudfoundry.identity.uaa.provider.ExternalIdentityProviderDefinition.*;
+import static org.cloudfoundry.identity.uaa.provider.saml.LoginSamlAuthenticationToken.AUTHENTICATION_CONTEXT_CLASS_REFERENCE;
+import static org.cloudfoundry.identity.uaa.util.UaaHttpRequestUtils.isAcceptedInvitationAuthentication;
+import static org.cloudfoundry.identity.uaa.util.UaaStringUtils.retainAllMatches;
 
 public class LoginSamlAuthenticationProvider extends SAMLAuthenticationProvider implements ApplicationEventPublisherAware {
-    private final static Log logger = LogFactory.getLog(LoginSamlAuthenticationProvider.class);
+    private final static Logger logger = LoggerFactory.getLogger(LoginSamlAuthenticationProvider.class);
     private UaaUserDatabase userDatabase;
     private ApplicationEventPublisher eventPublisher;
     private IdentityProviderProvisioning identityProviderProvisioning;
     private ScimGroupExternalMembershipManager externalMembershipManager;
+    private IdentityZoneManager identityZoneManager;
+
+    public LoginSamlAuthenticationProvider(IdentityZoneManager identityZoneManager) {
+        this.identityZoneManager = identityZoneManager;
+    }
 
     public void setIdentityProviderProvisioning(IdentityProviderProvisioning identityProviderProvisioning) {
         this.identityProviderProvisioning = identityProviderProvisioning;
@@ -121,16 +114,17 @@ public class LoginSamlAuthenticationProvider extends SAMLAuthenticationProvider 
             throw new IllegalArgumentException("Only SAMLAuthenticationToken is supported, " + authentication.getClass() + " was attempted");
         }
 
-        IdentityZone zone = IdentityZoneHolder.get();
-
+        IdentityZone zone = identityZoneManager.getCurrentIdentityZone();
+        logger.debug(String.format("Initiating SAML authentication in zone '%s' domain '%s'", zone.getId(), zone.getSubdomain()));
         SAMLAuthenticationToken token = (SAMLAuthenticationToken) authentication;
         SAMLMessageContext context = token.getCredentials();
         String alias = context.getPeerExtendedMetadata().getAlias();
+        String relayState = context.getRelayState();
         boolean addNew;
         IdentityProvider<SamlIdentityProviderDefinition> idp;
         SamlIdentityProviderDefinition samlConfig;
         try {
-            idp = identityProviderProvisioning.retrieveByOrigin(alias, IdentityZoneHolder.get().getId());
+            idp = identityProviderProvisioning.retrieveByOrigin(alias, identityZoneManager.getCurrentIdentityZoneId());
             samlConfig = idp.getConfig();
             addNew = samlConfig.isAddShadowUserOnLogin();
             if (!idp.isActive()) {
@@ -139,8 +133,17 @@ public class LoginSamlAuthenticationProvider extends SAMLAuthenticationProvider 
         } catch (EmptyResultDataAccessException x) {
             throw new ProviderNotFoundException("No SAML identity provider found in zone for alias:"+alias);
         }
+
         ExpiringUsernameAuthenticationToken result = getExpiringUsernameAuthenticationToken(authentication);
-        UaaPrincipal samlPrincipal = new UaaPrincipal(OriginKeys.NotANumber, result.getName(), result.getName(), alias, result.getName(), zone.getId());
+        UaaPrincipal samlPrincipal = new UaaPrincipal(NotANumber, result.getName(), result.getName(), alias, result.getName(), zone.getId());
+        logger.debug(
+            String.format(
+                "Mapped SAML authentication to IDP with origin '%s' and username '%s'",
+                idp.getOriginKey(),
+                samlPrincipal.getName()
+            )
+        );
+
         Collection<? extends GrantedAuthority> samlAuthorities = retrieveSamlAuthorities(samlConfig, (SAMLCredential) result.getCredentials());
 
         Collection<? extends GrantedAuthority> authorities = null;
@@ -156,9 +159,39 @@ public class LoginSamlAuthenticationProvider extends SAMLAuthenticationProvider 
 
         Set<String> filteredExternalGroups = filterSamlAuthorities(samlConfig, samlAuthorities);
         MultiValueMap<String, String> userAttributes = retrieveUserAttributes(samlConfig, (SAMLCredential) result.getCredentials());
+
+        if (samlConfig.getAuthnContext() != null) {
+            if (Collections.disjoint(userAttributes.get(AUTHENTICATION_CONTEXT_CLASS_REFERENCE), samlConfig.getAuthnContext())) {
+                throw new BadCredentialsException("Identity Provider did not authenticate with the requested AuthnContext.");
+            }
+        }
+
         UaaUser user = createIfMissing(samlPrincipal, addNew, authorities, userAttributes);
         UaaPrincipal principal = new UaaPrincipal(user);
-        return new LoginSamlAuthenticationToken(principal, result).getUaaAuthentication(user.getAuthorities(), filteredExternalGroups, userAttributes);
+        UaaAuthentication resultUaaAuthentication = new LoginSamlAuthenticationToken(principal, result).getUaaAuthentication(user.getAuthorities(), filteredExternalGroups, userAttributes);
+        publish(new IdentityProviderAuthenticationSuccessEvent(user, resultUaaAuthentication, OriginKeys.SAML, identityZoneManager.getCurrentIdentityZoneId()));
+        if (samlConfig.isStoreCustomAttributes()) {
+            userDatabase.storeUserInfo(user.getId(),
+                                       new UserInfo()
+                                           .setUserAttributes(resultUaaAuthentication.getUserAttributes())
+                                           .setRoles(new LinkedList(resultUaaAuthentication.getExternalGroups()))
+            );
+        }
+        configureRelayRedirect(relayState);
+
+        return resultUaaAuthentication;
+    }
+
+    public void configureRelayRedirect(String relayState) {
+        //configure relay state
+        if (UaaUrlUtils.isUrl(relayState)) {
+            RequestContextHolder.currentRequestAttributes()
+                .setAttribute(
+                    UaaSavedRequestAwareAuthenticationSuccessHandler.URI_OVERRIDE_ATTRIBUTE,
+                    relayState,
+                    RequestAttributes.SCOPE_REQUEST
+                );
+        }
     }
 
     protected ExpiringUsernameAuthenticationToken getExpiringUsernameAuthenticationToken(Authentication authentication) {
@@ -171,24 +204,26 @@ public class LoginSamlAuthenticationProvider extends SAMLAuthenticationProvider 
         }
     }
 
-    private Set<String> filterSamlAuthorities(SamlIdentityProviderDefinition definition, Collection<? extends GrantedAuthority> samlAuthorities) {
-        List<String> whiteList = Collections.EMPTY_LIST;
-        if (definition!=null && definition.getExternalGroupsWhitelist()!=null) {
-            whiteList = definition.getExternalGroupsWhitelist();
-        }
+    protected Set<String> filterSamlAuthorities(SamlIdentityProviderDefinition definition, Collection<? extends GrantedAuthority> samlAuthorities) {
+        List<String> whiteList = of(definition.getExternalGroupsWhitelist()).orElse(Collections.EMPTY_LIST);
         Set<String> authorities = samlAuthorities.stream().map(s -> s.getAuthority()).collect(Collectors.toSet());
-
-        return new HashSet<>(CollectionUtils.retainAll(authorities, whiteList));
+        Set<String> result = retainAllMatches(authorities, whiteList);
+        logger.debug(String.format("White listed external SAML groups:'%s'", result));
+        return result;
     }
 
     protected Collection<? extends GrantedAuthority> mapAuthorities(String origin, Collection<? extends GrantedAuthority> authorities) {
         Collection<GrantedAuthority> result = new LinkedList<>();
-            for (GrantedAuthority authority : authorities ) {
-                String externalGroup = authority.getAuthority();
-                    for (ScimGroupExternalMember internalGroup : externalMembershipManager.getExternalGroupMapsByExternalGroup(externalGroup, origin)) {
-                        result.add(new SimpleGrantedAuthority(internalGroup.getDisplayName()));
-                    }
+        logger.debug("Mapping SAML authorities:" + authorities);
+        for (GrantedAuthority authority : authorities ) {
+            String externalGroup = authority.getAuthority();
+            logger.debug("Attempting to map external group: "+externalGroup);
+            for (ScimGroupExternalMember internalGroup : externalMembershipManager.getExternalGroupMapsByExternalGroup(externalGroup, origin, identityZoneManager.getCurrentIdentityZoneId())) {
+                String internalName = internalGroup.getDisplayName();
+                logger.debug(String.format("Mapped external: '%s' to internal: '%s'", externalGroup, internalName));
+                result.add(new SimpleGrantedAuthority(internalName));
             }
+        }
         return result;
     }
 
@@ -229,6 +264,13 @@ public class LoginSamlAuthenticationProvider extends SAMLAuthenticationProvider 
                             }
                         }
                     }
+                }
+            }
+        }
+        if (credential.getAuthenticationAssertion() != null && credential.getAuthenticationAssertion().getAuthnStatements() != null) {
+            for (AuthnStatement statement : credential.getAuthenticationAssertion().getAuthnStatements()) {
+                if (statement.getAuthnContext() != null && statement.getAuthnContext().getAuthnContextClassRef() != null) {
+                    userAttributes.add(AUTHENTICATION_CONTEXT_CLASS_REFERENCE, statement.getAuthnContext().getAuthnContextClassRef().getAuthnContextClassRef());
                 }
             }
         }
@@ -285,7 +327,6 @@ public class LoginSamlAuthenticationProvider extends SAMLAuthenticationProvider 
             }
             addNew = false;
             if(user.getUsername().equals(user.getEmail()) && !user.getUsername().equals(samlPrincipal.getName())) {
-                user.setVerified(true);
                 user = user.modifyUsername(samlPrincipal.getName());
             }
             publish(new InvitedUserAuthenticatedEvent(user));
@@ -301,13 +342,13 @@ public class LoginSamlAuthenticationProvider extends SAMLAuthenticationProvider 
         } catch (UsernameNotFoundException e) {
             UaaUser uaaUser = userDatabase.retrieveUserByEmail(userWithSamlAttributes.getEmail(), samlPrincipal.getOrigin());
             if (uaaUser != null) {
+                userModified = true;
                 user = uaaUser.modifyUsername(samlPrincipal.getName());
             } else {
                 if (!addNew) {
                     throw new LoginSAMLException("SAML user does not exist. "
                             + "You can correct this by creating a shadow user for the SAML user.", e);
                 }
-                // Register new users automatically
                 publish(new NewUserAuthenticatedEvent(userWithSamlAttributes));
                 try {
                     user = userDatabase.retrieveUserByName(samlPrincipal.getName(), samlPrincipal.getOrigin());
@@ -318,7 +359,11 @@ public class LoginSamlAuthenticationProvider extends SAMLAuthenticationProvider 
         }
         if (haveUserAttributesChanged(user, userWithSamlAttributes)) {
             userModified = true;
-            user = user.modifyAttributes(userWithSamlAttributes.getEmail(), userWithSamlAttributes.getGivenName(), userWithSamlAttributes.getFamilyName(), userWithSamlAttributes.getPhoneNumber());
+            user = user.modifyAttributes(userWithSamlAttributes.getEmail(),
+                                         userWithSamlAttributes.getGivenName(),
+                                         userWithSamlAttributes.getFamilyName(),
+                                         userWithSamlAttributes.getPhoneNumber(),
+                                         user.isVerified() || userWithSamlAttributes.isVerified());
         }
         publish(
             new ExternalGroupAuthorizationEvent(
@@ -329,90 +374,36 @@ public class LoginSamlAuthenticationProvider extends SAMLAuthenticationProvider 
             )
         );
         user = userDatabase.retrieveUserById(user.getId());
-        UaaPrincipal result = new UaaPrincipal(user);
-        Authentication success = new UaaAuthentication(result, user.getAuthorities(), null);
-        publish(new UserAuthenticationSuccessEvent(user, success));
         return user;
     }
 
-    protected boolean isAcceptedInvitationAuthentication() {
-        try {
-            RequestAttributes attr = RequestContextHolder.currentRequestAttributes();
-            if (attr!=null) {
-                Boolean result = (Boolean) attr.getAttribute("IS_INVITE_ACCEPTANCE", RequestAttributes.SCOPE_SESSION);
-                if (result!=null) {
-                    return result.booleanValue();
-                }
-            }
-        } catch (IllegalStateException x) {
-            //nothing bound on thread.
-            logger.debug("Unable to retrieve request attributes during SAML authentication.");
-
-        }
-        return false;
-    }
-
     protected UaaUser getUser(UaaPrincipal principal, MultiValueMap<String,String> userAttributes) {
-        String name = principal.getName();
-        String email = userAttributes.getFirst(EMAIL_ATTRIBUTE_NAME);
-        String givenName = userAttributes.getFirst(GIVEN_NAME_ATTRIBUTE_NAME);
-        String familyName = userAttributes.getFirst(FAMILY_NAME_ATTRIBUTE_NAME);
-        String phoneNumber = userAttributes.getFirst(PHONE_NUMBER_ATTRIBUTE_NAME);
-        String userId = OriginKeys.NotANumber;
-        String origin = principal.getOrigin()!=null?principal.getOrigin(): OriginKeys.LOGIN_SERVER;
-        String zoneId = principal.getZoneId();
-        if (name == null && email != null) {
-            name = email;
-        }
-        if (name == null && OriginKeys.NotANumber.equals(userId)) {
+        if (principal.getName() == null && userAttributes.getFirst(EMAIL_ATTRIBUTE_NAME) == null) {
             throw new BadCredentialsException("Cannot determine username from credentials supplied");
-        } else if (name==null) {
-            //we have user_id, name is irrelevant
-            name="unknown";
         }
-        if (email == null) {
-            if (name.contains("@")) {
-                if (name.split("@").length == 2 && !name.startsWith("@") && !name.endsWith("@")) {
-                    email = name;
-                } else {
-                    email = name.replaceAll("@", "") + "@unknown.org";
-                }
-            }
-            else {
-                email = name + "@unknown.org";
-            }
-        }
-        if (givenName == null) {
-            givenName = email.split("@")[0];
-        }
-        if (familyName == null) {
-            familyName = email.split("@")[1];
-        }
-        return new UaaUser(
-        new UaaUserPrototype()
-            .withEmail(email)
-            .withGivenName(givenName)
-            .withFamilyName(familyName)
-            .withPhoneNumber(phoneNumber)
-            .withModified(new Date())
-            .withId(userId)
-            .withUsername(name)
-            .withPassword("")
-            .withAuthorities(Collections.EMPTY_LIST)
-            .withCreated(new Date())
-            .withOrigin(origin)
-            .withExternalId(name)
-            .withVerified(true)
-            .withZoneId(zoneId)
-            .withSalt(null)
-            .withPasswordLastModified(null));
+
+        String name = principal.getName();
+        return UaaUser.createWithDefaults(u ->
+            u.withId(OriginKeys.NotANumber)
+                .withUsername(name)
+                .withEmail(userAttributes.getFirst(EMAIL_ATTRIBUTE_NAME))
+                .withPhoneNumber(userAttributes.getFirst(PHONE_NUMBER_ATTRIBUTE_NAME))
+                .withPassword("")
+                .withGivenName(userAttributes.getFirst(GIVEN_NAME_ATTRIBUTE_NAME))
+                .withFamilyName(userAttributes.getFirst(FAMILY_NAME_ATTRIBUTE_NAME))
+                .withAuthorities(Collections.emptyList())
+                .withVerified(Boolean.valueOf(userAttributes.getFirst(EMAIL_VERIFIED_ATTRIBUTE_NAME)))
+                .withOrigin(principal.getOrigin() != null ? principal.getOrigin() : OriginKeys.LOGIN_SERVER)
+                .withExternalId(name)
+                .withZoneId(principal.getZoneId())
+        );
     }
 
-    private boolean haveUserAttributesChanged(UaaUser existingUser, UaaUser user) {
-        if (!StringUtils.equals(existingUser.getGivenName(), user.getGivenName()) || !StringUtils.equals(existingUser.getFamilyName(), user.getFamilyName()) ||
-                !StringUtils.equals(existingUser.getPhoneNumber(), user.getPhoneNumber()) || !StringUtils.equals(existingUser.getEmail(), user.getEmail())) {
-            return true;
-        }
-        return false;
+    protected boolean haveUserAttributesChanged(UaaUser existingUser, UaaUser user) {
+        return existingUser.isVerified() != user.isVerified() ||
+                !StringUtils.equals(existingUser.getGivenName(), user.getGivenName()) ||
+                !StringUtils.equals(existingUser.getFamilyName(), user.getFamilyName()) ||
+                !StringUtils.equals(existingUser.getPhoneNumber(), user.getPhoneNumber()) ||
+                !StringUtils.equals(existingUser.getEmail(), user.getEmail());
     }
 }

@@ -14,23 +14,41 @@
 
 package org.cloudfoundry.identity.uaa.util;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import org.apache.commons.codec.binary.Base64;
 import org.cloudfoundry.identity.uaa.oauth.client.ClientConstants;
+import org.cloudfoundry.identity.uaa.oauth.jwt.Jwt;
+import org.cloudfoundry.identity.uaa.oauth.jwt.JwtHelper;
 import org.cloudfoundry.identity.uaa.user.UaaUser;
+import org.cloudfoundry.identity.uaa.zone.IdentityZone;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.jwt.crypto.sign.Signer;
+import org.springframework.security.oauth2.common.exceptions.InvalidTokenException;
 import org.springframework.security.oauth2.provider.ClientDetails;
+import org.springframework.web.util.UriComponentsBuilder;
 
+import java.net.MalformedURLException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URL;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
+import static java.util.Collections.emptySet;
+import static java.util.Optional.ofNullable;
 import static org.cloudfoundry.identity.uaa.oauth.token.ClaimConstants.CID;
 import static org.cloudfoundry.identity.uaa.oauth.token.ClaimConstants.GRANT_TYPE;
 import static org.cloudfoundry.identity.uaa.oauth.token.ClaimConstants.SUB;
+import static org.cloudfoundry.identity.uaa.oauth.token.ClaimConstants.USER_ID;
+import static org.cloudfoundry.identity.uaa.oauth.token.TokenConstants.GRANT_TYPE_CLIENT_CREDENTIALS;
+import static org.springframework.util.StringUtils.hasText;
 
 public final class UaaTokenUtils {
 
@@ -126,14 +144,32 @@ public final class UaaTokenUtils {
     }
 
     public static boolean isUserToken(Map<String, Object> claims) {
-        return !"client_credentials".equals(claims.get(GRANT_TYPE)) || (claims.get(SUB)!=null && claims.get(SUB) == claims.get(CID));
+        if (claims.get(GRANT_TYPE)!=null) {
+            return !GRANT_TYPE_CLIENT_CREDENTIALS.equals(claims.get(GRANT_TYPE));
+        }
+        if (claims.get(SUB)!=null) {
+            if (claims.get(SUB).equals(claims.get(USER_ID))) {
+                return true;
+            } else if (claims.get(SUB).equals(claims.get(CID))) {
+                return false;
+            }
+        }
+        //err on the side of caution
+        return true;
     }
 
-    public static String getRevocableTokenSignature(ClientDetails client, UaaUser user) {
+    public static String getRevocableTokenSignature(ClientDetails client, String clientSecret, UaaUser user) {
+        String tokenSalt = (String) client.getAdditionalInformation().get(ClientConstants.TOKEN_SALT);
+        String clientId = client.getClientId();
+
+        return getRevocableTokenSignature(user, tokenSalt, clientId, clientSecret);
+    }
+
+    public static String getRevocableTokenSignature(UaaUser user, String tokenSalt, String clientId, String clientSecret) {
         String[] salts = new String[] {
-            client.getClientId(),
-            client.getClientSecret(),
-            (String)client.getAdditionalInformation().get(ClientConstants.TOKEN_SALT),
+            clientId,
+            clientSecret,
+            tokenSalt,
             user == null ? null : user.getId(),
             user == null ? null : user.getPassword(),
             user == null ? null : user.getSalt(),
@@ -165,5 +201,64 @@ public final class UaaTokenUtils {
 
     public static boolean isJwtToken(String token) {
         return jwtPattern.matcher(token).matches();
+    }
+
+    public static String constructTokenEndpointUrl(String issuer, IdentityZone identityZone) throws URISyntaxException {
+        URI uri;
+        if (!identityZone.isUaa()) {
+            String zone_issuer = identityZone.getConfig() != null ? identityZone.getConfig().getIssuer() : null;
+            if(zone_issuer != null) {
+                uri = validateIssuer(zone_issuer);
+                return UriComponentsBuilder.fromUri(uri).pathSegment("oauth/token").build().toUriString();
+            }
+        }
+        uri = validateIssuer(issuer);
+        String hostToUse = uri.getHost();
+        if (hasText(identityZone.getSubdomain())) {
+            hostToUse = identityZone.getSubdomain() + "." + hostToUse;
+        }
+        return UriComponentsBuilder.fromUri(uri).host(hostToUse).pathSegment("oauth/token").build().toUriString();
+    }
+
+    private static URI validateIssuer(String issuer) throws URISyntaxException {
+        try {
+            new URL(issuer);
+        } catch (MalformedURLException x) {
+            throw new URISyntaxException(issuer, x.getMessage());
+        }
+        return new URI(issuer);
+    }
+
+    public static boolean hasRequiredUserAuthorities(Collection<String> requiredGroups, Collection<? extends GrantedAuthority> userGroups) {
+        return hasRequiredUserGroups(requiredGroups,
+                                     ofNullable(userGroups).orElse(emptySet())
+                                        .stream()
+                                        .map(GrantedAuthority::getAuthority)
+                                        .collect(Collectors.toList())
+        );
+    }
+
+    public static boolean hasRequiredUserGroups(Collection<String> requiredGroups, Collection<String> userGroups) {
+        return ofNullable(userGroups).orElse(emptySet())
+            .containsAll(ofNullable(requiredGroups).orElse(emptySet()));
+    }
+
+    public static Map<String, Object> getClaims(String jwtToken) {
+        Jwt jwt;
+        try {
+            jwt = JwtHelper.decode(jwtToken);
+        } catch (Exception ex) {
+            throw new InvalidTokenException("Invalid token (could not decode): " + jwtToken, ex);
+        }
+
+        Map<String, Object> claims;
+        try {
+            claims = JsonUtils.readValue(jwt.getClaims(), new TypeReference<Map<String, Object>>() {
+            });
+        } catch (JsonUtils.JsonUtilException ex) {
+            throw new InvalidTokenException("Invalid token (cannot read token claims): " + jwtToken, ex);
+        }
+
+        return claims != null ? claims : new HashMap<>();
     }
 }

@@ -11,7 +11,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
-import static org.springframework.restdocs.snippet.Attributes.attributes;
 import static org.springframework.restdocs.snippet.Attributes.key;
 import static org.springframework.util.StringUtils.hasText;
 
@@ -65,6 +64,7 @@ public final class SnippetUtils {
         }
 
         public ConstrainableHeader optional(String defaultValue) {
+            super.optional();
             Attributes.Attribute[] attrs = new Attributes.Attribute[] {key("constraints").value(hasText(defaultValue) ? "Optional (defaults to `" + defaultValue + "`)" : OPTIONAL)};
             return (ConstrainableHeader)attributes(attrs);
         }
@@ -115,7 +115,6 @@ public final class SnippetUtils {
     }
 
     public static FieldDescriptor[] subFields(String path, FieldDescriptor... fieldDescriptors) {
-        List<SubField> subFields = Arrays.asList(fieldDescriptors).stream().map(field -> new SubField(path, field)).collect(Collectors.toList());
-        return subFields.toArray(new FieldDescriptor[subFields.size()]);
+        return Arrays.stream(fieldDescriptors).map(field -> new SubField(path, field)).toArray(FieldDescriptor[]::new);
     }
 }

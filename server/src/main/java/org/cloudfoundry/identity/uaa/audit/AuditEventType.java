@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2016] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -14,7 +14,7 @@ package org.cloudfoundry.identity.uaa.audit;
 
 /**
  * Allows audit events to be classified by type.
- * 
+ *
  * @author Luke Taylor
  * @author Dave Syer
  */
@@ -50,16 +50,22 @@ public enum AuditEventType {
     EmailChangedEvent(26),
     UnverifiedUserAuthentication(27),
     IdentityProviderCreatedEvent(28),
-    IdentityProviderModifiedEvent(29), 
+    IdentityProviderModifiedEvent(29),
     IdentityZoneCreatedEvent(30),
     IdentityZoneModifiedEvent(31),
     EntityDeletedEvent(32),
     ServiceProviderCreatedEvent(33),
-    ServiceProviderModifiedEvent(34);
+    ServiceProviderModifiedEvent(34),
+    UserAccountUnlockedEvent(35),
+    TokenRevocationEvent(36),
+    IdentityProviderAuthenticationSuccess(37),
+    IdentityProviderAuthenticationFailure(38),
+    MfaAuthenticationSuccess(39),
+    MfaAuthenticationFailure(40);
 
     private final int code;
 
-    private AuditEventType(int code) {
+    AuditEventType(int code) {
         this.code = code;
     }
 

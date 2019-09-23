@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2016] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -19,10 +19,10 @@ import org.springframework.security.core.Authentication;
 /**
  * @author Luke Taylor
  */
-abstract class AbstractUaaAuthenticationEvent extends AbstractUaaEvent {
+public abstract class AbstractUaaAuthenticationEvent extends AbstractUaaEvent {
 
-    AbstractUaaAuthenticationEvent(Authentication authentication) {
-        super(authentication);
+    AbstractUaaAuthenticationEvent(Authentication authentication, String zoneId) {
+        super(authentication, zoneId);
     }
 
     protected String getOrigin(UaaAuthenticationDetails details) {

@@ -1,7 +1,7 @@
 /*
  * *****************************************************************************
  *      Cloud Foundry
- *      Copyright (c) [2009-2016] Pivotal Software, Inc. All Rights Reserved.
+ *      Copyright (c) [2009-2017] Pivotal Software, Inc. All Rights Reserved.
  *      This product is licensed to you under the Apache License, Version 2.0 (the "License").
  *      You may not use this product except in compliance with the License.
  *
@@ -18,6 +18,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 
 import java.util.List;
+import java.util.Optional;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -57,15 +58,14 @@ public class Links {
     public static class Logout {
         private String redirectUrl = "/login";
         private String redirectParameterName = "redirect";
-        private boolean disableRedirectParameter = true;
+        private boolean disableRedirectParameter = false;
         private List<String> whitelist = null;
 
         public boolean isDisableRedirectParameter() {
-            return disableRedirectParameter;
+            return false;
         }
 
         public Logout setDisableRedirectParameter(boolean disableRedirectParameter) {
-            this.disableRedirectParameter = disableRedirectParameter;
             return this;
         }
 
@@ -79,7 +79,7 @@ public class Links {
         }
 
         public String getRedirectUrl() {
-            return redirectUrl;
+            return Optional.ofNullable(redirectUrl).orElse("/login");
         }
 
         public Logout setRedirectUrl(String redirectUrl) {
@@ -99,8 +99,8 @@ public class Links {
 
     public static class SelfService {
         private boolean selfServiceLinksEnabled = true;
-        private String signup = "/create_account";
-        private String passwd = "/forgot_password";
+        private String signup = null;
+        private String passwd = null;
 
         public boolean isSelfServiceLinksEnabled() {
             return selfServiceLinksEnabled;

@@ -17,6 +17,7 @@ package org.cloudfoundry.identity.uaa.util;
 import org.springframework.util.MultiValueMap;
 
 import java.io.Serializable;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -65,6 +66,11 @@ public class LinkedMaskingMultiValueMap<K, V> implements MultiValueMap<K, V>, Se
         this.maskedAttributeSet.add(maskedAttribute);
     }
 
+    public LinkedMaskingMultiValueMap(K... maskedAttribute) {
+        this.targetMap = new LinkedHashMap<K, List<V>>();
+        this.maskedAttributeSet.addAll(Arrays.asList(maskedAttribute));
+    }
+
     /**
      * Create a new LinkedMultiValueMap that wraps a {@link java.util.LinkedHashMap}.
      */
@@ -105,6 +111,20 @@ public class LinkedMaskingMultiValueMap<K, V> implements MultiValueMap<K, V>, Se
             this.targetMap.put(key, values);
         }
         values.add(value);
+    }
+
+    @Override
+    public void addAll(K key, List<? extends V> values) {
+        for (V value : values) {
+            add(key, value);
+        }
+    }
+
+    @Override
+    public void addAll(MultiValueMap<K, V> values) {
+        for (Entry<K, List<V>> entry : values.entrySet()) {
+            addAll(entry.getKey(), entry.getValue());
+        }
     }
 
     @Override

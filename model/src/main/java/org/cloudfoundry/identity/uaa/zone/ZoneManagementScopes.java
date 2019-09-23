@@ -14,10 +14,14 @@
 
 package org.cloudfoundry.identity.uaa.zone;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.stream.Collectors;
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class ZoneManagementScopes {
     public static final String ZONE_ID_MATCH = "{zone.id}";
     public static final String ZONES_ZONE_ID_PREFIX = "zones." ;
@@ -34,7 +38,11 @@ public class ZoneManagementScopes {
             ZONES_ZONE_ID_PREFIX + ZONE_ID_MATCH + ".scim.read",
             ZONES_ZONE_ID_PREFIX + ZONE_ID_MATCH + ".scim.write",
             ZONES_ZONE_ID_PREFIX + ZONE_ID_MATCH + ".scim.create",
-            ZONES_ZONE_ID_PREFIX + ZONE_ID_MATCH + ".idps.read"
+            ZONES_ZONE_ID_PREFIX + ZONE_ID_MATCH + ".idps.read",
+            ZONES_ZONE_ID_PREFIX + ZONE_ID_MATCH + ".idps.write",
+            ZONES_ZONE_ID_PREFIX + ZONE_ID_MATCH + ".sps.read",
+            ZONES_ZONE_ID_PREFIX + ZONE_ID_MATCH + ".sps.write",
+            ZONES_ZONE_ID_PREFIX + ZONE_ID_MATCH + ".scim.invite"
     };
 
     public static final List<String> UAA_SCOPES = Collections.unmodifiableList(
@@ -50,6 +58,11 @@ public class ZoneManagementScopes {
             ZONES_ZONE_ID_PREFIX + "*.scim.read",
             ZONES_ZONE_ID_PREFIX + "*.scim.write",
             ZONES_ZONE_ID_PREFIX + "*.idps.read",
+            ZONES_ZONE_ID_PREFIX + "*.idps.write",
+            ZONES_ZONE_ID_PREFIX + "*.sps.write",
+            ZONES_ZONE_ID_PREFIX + "*.sps.read",
+            "sps.write",
+            "sps.read",
             "idps.read",
             "idps.write",
             "clients.admin",
@@ -67,6 +80,13 @@ public class ZoneManagementScopes {
             "uaa.admin"
         )
     );
+
+    public static List<String> getSystemScopes() {
+        return UAA_SCOPES
+            .stream()
+            .filter(s -> !s.startsWith(ZONES_ZONE_ID_PREFIX))
+            .collect(Collectors.toList());
+    }
 
     public static String[] getZoneSwitchingScopes(String identityZoneId) {
         String[] result = new String[ZONE_SWITCH_SCOPES.length];

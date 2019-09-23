@@ -27,10 +27,12 @@ public class ClaimConstants {
     public static final String FAMILY_NAME = "family_name";
     public static final String PHONE_NUMBER = "phone_number";
     public static final String EMAIL = "email";
+    public static final String EMAIL_VERIFIED = "email_verified";
     public static final String CLIENT_ID = "client_id";
     public static final String EXP = "exp";
     public static final String AUTHORITIES = "authorities";
     public static final String SCOPE = "scope";
+    public static final String GRANTED_SCOPES = "granted_scopes";
     public static final String JTI = "jti";
     public static final String AUD = "aud";
     public static final String SUB = "sub";
@@ -49,4 +51,8 @@ public class ClaimConstants {
     public static final String PROFILE = "profile";
     public static final String USER_ATTRIBUTES = "user_attributes";
     public static final String REVOCABLE = "revocable";
+    public static final String EXTERNAL_ATTR = "ext_attr";
+    public static final String AMR = "amr";
+    public static final String ACR = "acr";
+    public static final String PREVIOUS_LOGON_TIME = "previous_logon_time";
 }

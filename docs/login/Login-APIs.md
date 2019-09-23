@@ -9,7 +9,6 @@
 		- [Token Endpoint: `POST /oauth/token`](#token-endpoint-post-oauthtoken)
 	- [Login Info: `GET /login`](#login-info-get-login)
 	- [Healthz: `GET /healthz`](#healthz-get-healthz)
-	- [Varz: `GET /varz`](#varz-get-varz)
 	- [Autologin](#autologin)
 		- [Obtain Autologin Code: `POST /autologin`](#obtain-autologin-code-post-autologin)
 
@@ -37,13 +36,27 @@ Browser POSTs to `/login.do` with user credentials (same as UAA).
 Login Server returns a cookie that can be used to authenticate future
 requests (until the session expires or the user logs out).
 
+In order to use this endpoint, a Cross-Site Request Forgery (CSRF) token needs to first
+be received from ``GET /login``, which will set it as a response cookie called ``X-Uaa-Csrf``.  Furthermore, the following headers are required in the POST for successful authentication:
+
+| Header        | Value            |
+| ------------- | ----------------:|
+| Accept        | application/json |
+| Content-Type  | application/x-www-form-urlencoded  |
+| Referer       | http://login.cloudfoundry.example.com/login |
+
+The raw data for the request must be submitted in the following format, and must include the CSRF token (sample below):
+```
+'username=admin&password=mypassword&X-Uaa-Csrf=abcdef'
+```
+Finally, in addition to being submitted as part of the raw data, the CSRF token must also be added to the POST request as a cookie, also named ``X-Uaa-Csrf``.
 ## Logout: `GET /logout.do`
 
 The Login Server is a Single Sign On server for the Cloud Foundry
 platform (and possibly user apps as well), so if a user logs out he
 logs out of all the apps.  Users need to be reminded of the
 consequences of their actions, so the recommendation for application
-authors is to 
+authors is to
 
 * provide a local logout feature specific to the client application
   and use that to clear state in the client
@@ -106,48 +119,6 @@ Unauthenticated.
 ## Healthz: `GET /healthz`
 
 Returns "ok" in the response body if the server is up and running
-
-## Varz: `GET /varz`
-
-Reports basic management information about the Login Server and the
-JVM it runs in (memory usage etc.).  Secured with HTTP Basic
-authentication using credentials that are advertised on NATS in Cloud
-Foundry (for a standalone instance the default is
-`varz:varzclientsecret`).
-
-Request: `GET /varz`  
-Response Body:  
-
-    {
-      "type": "Login",
-      "links": {
-        "JMImplementation": "http://localhost:8080/uaa/varz/JMImplementation",
-        "spring.application": "http://localhost:8080/uaa/varz/spring.application",
-        "com.sun.management": "http://localhost:8080/uaa/varz/com.sun.management",
-        "Catalina": "http://localhost:8080/uaa/varz/Catalina",
-        "env": "http://localhost:8080/uaa/varz/env",
-        "java.lang": "http://localhost:8080/uaa/varz/java.lang",
-        "java.util.logging": "http://localhost:8080/uaa/varz/java.util.logging"
-      },
-      "mem": 19173496,
-      "memory": {
-        "verbose": false,
-        "non_heap_memory_usage": {
-          "max": 184549376,
-          "committed": 30834688,
-          "init": 19136512,
-          "used": 30577744
-        },
-        "object_pending_finalization_count": 0,
-        "heap_memory_usage": {
-          "max": 902299648,
-          "committed": 84475904,
-          "init": 63338496,
-          "used": 19173496
-        }
-      },
-      "spring.profiles.active": []
-    }
 
 ## Autologin
 

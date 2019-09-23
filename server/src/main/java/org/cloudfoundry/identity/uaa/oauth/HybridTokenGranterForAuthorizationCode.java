@@ -14,12 +14,11 @@
 
 package org.cloudfoundry.identity.uaa.oauth;
 
-
+import org.cloudfoundry.identity.uaa.zone.MultitenantClientServices;
 import org.springframework.security.authentication.InsufficientAuthenticationException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.provider.ClientDetails;
-import org.springframework.security.oauth2.provider.ClientDetailsService;
 import org.springframework.security.oauth2.provider.OAuth2Authentication;
 import org.springframework.security.oauth2.provider.OAuth2Request;
 import org.springframework.security.oauth2.provider.OAuth2RequestFactory;
@@ -29,11 +28,13 @@ import org.springframework.security.oauth2.provider.token.AbstractTokenGranter;
 import org.springframework.security.oauth2.provider.token.AuthorizationServerTokenServices;
 import org.springframework.util.Assert;
 
-public class HybridTokenGranterForAuthorizationCode extends AbstractTokenGranter {
-    private static final String GRANT_TYPE = "authorization_code";
+import static org.cloudfoundry.identity.uaa.oauth.token.TokenConstants.GRANT_TYPE_AUTHORIZATION_CODE;
 
-    public HybridTokenGranterForAuthorizationCode(AuthorizationServerTokenServices tokenServices, ClientDetailsService clientDetailsService, OAuth2RequestFactory requestFactory) {
-        super(tokenServices, clientDetailsService, requestFactory, GRANT_TYPE);
+public class HybridTokenGranterForAuthorizationCode extends AbstractTokenGranter {
+    public HybridTokenGranterForAuthorizationCode(AuthorizationServerTokenServices tokenServices,
+                                                  MultitenantClientServices clientDetailsService,
+                                                  OAuth2RequestFactory requestFactory) {
+        super(tokenServices, clientDetailsService, requestFactory, GRANT_TYPE_AUTHORIZATION_CODE);
     }
 
     @Override

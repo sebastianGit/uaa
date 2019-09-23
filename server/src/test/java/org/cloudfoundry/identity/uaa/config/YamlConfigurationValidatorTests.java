@@ -13,13 +13,22 @@
 package org.cloudfoundry.identity.uaa.config;
 
 import static org.junit.Assert.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 
 import javax.validation.ConstraintViolationException;
 import javax.validation.constraints.NotNull;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.cloudfoundry.identity.uaa.impl.config.CustomPropertyConstructor;
 import org.cloudfoundry.identity.uaa.impl.config.YamlConfigurationValidator;
+import org.junit.After;
 import org.junit.Test;
+import org.slf4j.Marker;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.yaml.snakeyaml.error.YAMLException;
 
 /**
@@ -38,6 +47,11 @@ public class YamlConfigurationValidatorTests {
         return validator.getObject();
     }
 
+    @After
+    public void resetLog() {
+        ReflectionTestUtils.setField(YamlConfigurationValidator.class, "logger", LoggerFactory.getLogger(YamlConfigurationValidator.class));
+    }
+
     @Test
     public void validYamlLoadsWithNoErrors() throws Exception {
         Foo foo = createFoo("foo-name: blah\nbar: blah");
@@ -47,6 +61,25 @@ public class YamlConfigurationValidatorTests {
     @Test(expected = YAMLException.class)
     public void unknownPropertyCausesLoadFailure() throws Exception {
         createFoo("hi: hello\nname: foo\nbar: blah");
+    }
+
+    @Test
+    public void invalid_yaml_no_log() throws Exception {
+        Logger log = spy(LoggerFactory.getLogger(YamlConfigurationValidator.class));
+
+        ReflectionTestUtils.setField(YamlConfigurationValidator.class, "logger", log);
+
+        validator = new YamlConfigurationValidator<>(new FooConstructor());
+        validator.setExceptionIfInvalid(false);
+        validator.setYaml("hi: hello\nname: foo\nbar: blah");
+        validator.afterPropertiesSet();
+        validator.getObject();
+
+        verify(log, never()).error(any());
+        verify(log, never()).error(any(), any(Object.class));
+        verify(log, never()).error(any(), any(Throwable.class));
+        verify(log, never()).error(any(Marker.class), any(), any(Object.class));
+        verify(log, never()).error(any(Marker.class), any(), any(Throwable.class));
     }
 
     @Test(expected = ConstraintViolationException.class)

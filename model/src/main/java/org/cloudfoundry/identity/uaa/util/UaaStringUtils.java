@@ -1,6 +1,6 @@
 /*******************************************************************************
  *     Cloud Foundry
- *     Copyright (c) [2009-2016] Pivotal Software, Inc. All Rights Reserved.
+ *     Copyright (c) [2009-2017] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
  *     You may not use this product except in compliance with the License.
@@ -10,9 +10,9 @@
  *     subcomponents is subject to the terms and conditions of the
  *     subcomponent's license, as noted in the LICENSE file.
  *******************************************************************************/
-
 package org.cloudfoundry.identity.uaa.util;
 
+import org.cloudfoundry.identity.uaa.zone.IdentityZone;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.util.StringUtils;
@@ -20,6 +20,7 @@ import org.springframework.util.StringUtils;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -30,16 +31,32 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
-/**
- * @author Dave Syer
- *
- */
 public class UaaStringUtils {
+
+    public static final String ZONE_VAR_ID = "{zone.id}";
+    public static final String ZONE_VAR_SUBDOMAIN = "{zone.subdomain}";
 
     public static final String ISO_8859_1 = "ISO-8859-1";
     public static final String UTF_8 = "UTF-8";
+
+    public static String replaceZoneVariables(String s, IdentityZone zone) {
+        return s.replace(ZONE_VAR_ID, zone.getId()).replace(ZONE_VAR_SUBDOMAIN, zone.getSubdomain());
+    }
+
+    public static String nonNull(String... s) {
+        if (s != null) {
+            for (String str : s) {
+                if (str != null) {
+                    return str;
+                }
+            }
+        }
+        return null;
+    }
 
     /**
      * Convert a string from camel case to underscores, also replacing periods
@@ -106,6 +123,11 @@ public class UaaStringUtils {
         return result;
     }
 
+    public static Set<String> retainAllMatches(Collection<String> values, Collection<String> whitelist) {
+        Set<Pattern> regExPatterns = UaaStringUtils.constructWildcards(new HashSet<>(whitelist), UaaStringUtils::constructSimpleWildcardPatternWithAnyCharDelimiter);
+        return values.stream().filter(s -> matches(regExPatterns, s)).collect(Collectors.toSet());
+    }
+
     public static boolean containsWildcard(String s) {
         if (StringUtils.hasText(s)) {
             return !escapeRegExCharacters(s).equals(constructSimpleWildcardPattern(s));
@@ -122,7 +144,7 @@ public class UaaStringUtils {
      * @return a regular expression string that will only match exact literals
      */
     public static String escapeRegExCharacters(String s) {
-        return escapeRegExCharacters(s, "([^a-zA-z0-9 ])");
+        return escapeRegExCharacters(s, "([^a-zA-Z0-9 ])");
     }
 
     /**
@@ -152,10 +174,20 @@ public class UaaStringUtils {
         return result.replace("\\*", "[^\\\\.]+");
     }
 
+    public static String constructSimpleWildcardPatternWithAnyCharDelimiter(String s) {
+        String result = escapeRegExCharacters(s);
+        return result.replace("\\*", ".*");
+    }
+
+
     public static Set<Pattern> constructWildcards(Collection<String> wildcardStrings) {
+        return constructWildcards(wildcardStrings, UaaStringUtils::constructSimpleWildcardPattern);
+    }
+
+    public static Set<Pattern> constructWildcards(Collection<String> wildcardStrings, Function<String, String> replace) {
         Set<Pattern> wildcards = new HashSet<>();
         for (String wildcard : wildcardStrings) {
-            String pattern = UaaStringUtils.constructSimpleWildcardPattern(wildcard);
+            String pattern = replace.apply(wildcard);
             wildcards.add(Pattern.compile(pattern));
         }
         return wildcards;
@@ -200,7 +232,13 @@ public class UaaStringUtils {
     }
 
     private static boolean isPassword(String key) {
-        return key.endsWith("password") || key.endsWith("secret") || key.endsWith("signing-key");
+        key = key.toLowerCase();
+        return
+            key.endsWith("password") ||
+            key.endsWith("secret") ||
+            key.endsWith("signing-key") ||
+            key.contains("serviceproviderkey")
+            ;
     }
 
     public static Set<String> getStringsFromAuthorities(Collection<? extends GrantedAuthority> authorities) {
@@ -239,8 +277,16 @@ public class UaaStringUtils {
         if (s==null) {
             return null;
         } else {
-            return new String(s.getBytes(Charset.forName(ISO_8859_1)), Charset.forName(UTF_8));
+            return new String(s.getBytes(StandardCharsets.ISO_8859_1), StandardCharsets.UTF_8);
         }
+    }
+
+    public static String toJsonString(String s) {
+        if (s == null) {
+            return null;
+        }
+        String result = JsonUtils.writeValueAsString(s);
+        return result.substring(1, result.length()-1);
     }
 
 }

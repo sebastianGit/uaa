@@ -12,18 +12,20 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.client;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.cloudfoundry.identity.uaa.audit.event.EntityDeletedEvent;
 import org.cloudfoundry.identity.uaa.resources.QueryableResourceManager;
 import org.cloudfoundry.identity.uaa.resources.jdbc.AbstractQueryable;
 import org.cloudfoundry.identity.uaa.resources.jdbc.JdbcPagingListFactory;
 import org.cloudfoundry.identity.uaa.util.JsonUtils;
-import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
+import org.cloudfoundry.identity.uaa.zone.MultitenantJdbcClientDetailsService;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.provider.ClientDetails;
 import org.springframework.security.oauth2.provider.client.BaseClientDetails;
-import org.springframework.security.oauth2.provider.client.JdbcClientDetailsService;
 import org.springframework.util.StringUtils;
 
 import java.sql.ResultSet;
@@ -34,9 +36,9 @@ import java.util.Map;
 public class JdbcQueryableClientDetailsService extends AbstractQueryable<ClientDetails> implements
                 QueryableResourceManager<ClientDetails> {
 
-    private static final Log logger = LogFactory.getLog(JdbcQueryableClientDetailsService.class);
+    private static final Logger logger = LoggerFactory.getLogger(JdbcQueryableClientDetailsService.class);
 
-    private JdbcClientDetailsService delegate;
+    private MultitenantJdbcClientDetailsService delegate;
 
     private static final String CLIENT_FIELDS = "client_id, client_secret, resource_ids, scope, "
                     + "authorized_grant_types, web_server_redirect_uri, authorities, access_token_validity, "
@@ -46,7 +48,7 @@ public class JdbcQueryableClientDetailsService extends AbstractQueryable<ClientD
     private static final String BASE_FIND_STATEMENT = "select " + CLIENT_FIELDS
         + " from " + CLIENT_DETAILS_TABLE;
 
-    public JdbcQueryableClientDetailsService(JdbcClientDetailsService delegate, JdbcTemplate jdbcTemplate,
+    public JdbcQueryableClientDetailsService(MultitenantJdbcClientDetailsService delegate, JdbcTemplate jdbcTemplate,
                     JdbcPagingListFactory pagingListFactory) {
         super(jdbcTemplate, pagingListFactory, new ClientDetailsRowMapper());
         this.delegate = delegate;
@@ -62,43 +64,37 @@ public class JdbcQueryableClientDetailsService extends AbstractQueryable<ClientD
     }
 
     @Override
-    public List<ClientDetails> query(String filter, String sortBy, boolean ascending) {
-        //validate syntax
-        getQueryConverter().convert(filter, sortBy, ascending);
-        if (StringUtils.hasText(filter)) {
-            filter = "(" + filter + ") and ";
-        }
-        filter += " identity_zone_id eq \""+IdentityZoneHolder.get().getId()+"\"";
-        return super.query(filter, sortBy, ascending);
+    public List<ClientDetails> retrieveAll(String zoneId) {
+        return delegate.listClientDetails(zoneId);
     }
 
     @Override
-    public List<ClientDetails> retrieveAll() {
-        return delegate.listClientDetails();
+    public ClientDetails retrieve(String id, String zoneId) {
+        return delegate.loadClientByClientId(id, zoneId);
     }
 
     @Override
-    public ClientDetails retrieve(String id) {
-        return delegate.loadClientByClientId(id);
+    public ClientDetails create(ClientDetails resource, String zoneId) {
+        delegate.addClientDetails(resource, zoneId);
+        return delegate.loadClientByClientId(resource.getClientId(), zoneId);
     }
 
     @Override
-    public ClientDetails create(ClientDetails resource) {
-        delegate.addClientDetails(resource);
-        return delegate.loadClientByClientId(resource.getClientId());
+    public ClientDetails update(String id, ClientDetails resource, String zoneId) {
+        delegate.updateClientDetails(resource, zoneId);
+        return delegate.loadClientByClientId(id, zoneId);
     }
 
     @Override
-    public ClientDetails update(String id, ClientDetails resource) {
-        delegate.updateClientDetails(resource);
-        return delegate.loadClientByClientId(id);
-    }
-
-    @Override
-    public ClientDetails delete(String id, int version) {
-        ClientDetails client = delegate.loadClientByClientId(id);
-        delegate.removeClientDetails(id);
+    public ClientDetails delete(String id, int version, String zoneId) {
+        ClientDetails client = delegate.loadClientByClientId(id, zoneId);
+        delegate.onApplicationEvent(new EntityDeletedEvent<>(client, SecurityContextHolder.getContext().getAuthentication(), IdentityZoneHolder.getCurrentZoneId()));
         return client;
+    }
+
+    @Override
+    protected void validateOrderBy(String orderBy) throws IllegalArgumentException {
+        super.validateOrderBy(orderBy, CLIENT_FIELDS.replace("client_secret,", ""));
     }
 
     private static class ClientDetailsRowMapper implements RowMapper<ClientDetails> {

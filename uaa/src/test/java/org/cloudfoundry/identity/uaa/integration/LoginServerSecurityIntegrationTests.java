@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2016] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -20,7 +20,6 @@ import org.cloudfoundry.identity.uaa.account.PasswordChangeRequest;
 import org.cloudfoundry.identity.uaa.scim.ScimUser;
 import org.cloudfoundry.identity.uaa.test.TestAccountSetup;
 import org.cloudfoundry.identity.uaa.test.UaaTestAccounts;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -52,14 +51,16 @@ import java.util.Map;
 
 import static org.cloudfoundry.identity.uaa.constants.OriginKeys.LOGIN_SERVER;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertFalse;
 
 /**
  * Integration test to verify that the Login Server authentication channel is
  * open and working.
- * 
+ *
  * @author Dave Syer
  */
 public class LoginServerSecurityIntegrationTests {
@@ -114,20 +115,17 @@ public class LoginServerSecurityIntegrationTests {
     @BeforeOAuth2Context
     @OAuth2ContextConfiguration(OAuth2ContextConfiguration.ClientCredentials.class)
     public void setUpUserAccounts() {
-
-        // If running against vcap we don't want to run these tests because they
-        // create new user accounts
-        Assume.assumeTrue(!testAccounts.isProfileActive("vcap"));
-
         RestOperations client = serverRunning.getRestTemplate();
 
         ScimUser user = new ScimUser();
+        user.setPassword("password");
         user.setUserName(JOE);
         user.setName(new ScimUser.Name("Joe", "User"));
         user.addEmail("joe@blah.com");
         user.setVerified(true);
 
         userForLoginServer = new ScimUser();
+        userForLoginServer.setPassword("password");
         userForLoginServer.setUserName(LOGIN_SERVER_JOE);
         userForLoginServer.setName(new ScimUser.Name("Joe_login_server", "User"));
         userForLoginServer.addEmail("joe_ls@blah.com");
@@ -262,7 +260,6 @@ public class LoginServerSecurityIntegrationTests {
         params.remove("username");
         @SuppressWarnings("rawtypes")
         ResponseEntity<Map> response = serverRunning.postForMap(serverRunning.getAuthorizationUri(), params, headers);
-        // TODO: should be 302
         assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
         @SuppressWarnings("unchecked")
         Map<String, String> results = response.getBody();
@@ -280,7 +277,6 @@ public class LoginServerSecurityIntegrationTests {
         params.set("given_name", "Mabel");
         @SuppressWarnings("rawtypes")
         ResponseEntity<Map> response = serverRunning.postForMap(serverRunning.getAuthorizationUri(), params, headers);
-        // TODO: should be 302
         assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
         @SuppressWarnings("unchecked")
         Map<String, String> results = response.getBody();
@@ -331,6 +327,30 @@ public class LoginServerSecurityIntegrationTests {
         @SuppressWarnings("unchecked")
         Map<String, String> results = response.getBody();
         assertNotNull("There should be an error: " + results, results.containsKey("error"));
+    }
+
+    @Test
+    @OAuth2ContextConfiguration(LoginClient.class)
+    public void testAddNewUserWithWrongEmailFormat() throws Exception {
+        ((RestTemplate) serverRunning.getRestTemplate())
+                        .setRequestFactory(new HttpComponentsClientHttpRequestFactory());
+        params.set("client_id", testAccounts.getDefaultImplicitResource().getClientId());
+        params.set("source","login");
+        params.set("username", "newuser");
+        params.remove("given_name");
+        params.remove("family_name");
+        params.set("email", "noAtSign");
+        params.set(UaaAuthenticationDetails.ADD_NEW, "true");
+        @SuppressWarnings("rawtypes")
+        ResponseEntity<Map> response = serverRunning.postForMap(serverRunning.getAuthorizationUri(), params, headers);
+        assertNotNull(response);
+        assertNotEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getStatusCode());
+        assertEquals(HttpStatus.FOUND, response.getStatusCode());
+        @SuppressWarnings("unchecked")
+        Map<String, String> results = response.getBody();
+        if (results != null) {
+            assertFalse("There should not be an error: " + results, results.containsKey("error"));
+        }
     }
 
     @Test
@@ -390,7 +410,7 @@ public class LoginServerSecurityIntegrationTests {
         params.set("source","login");
         params.set(UaaAuthenticationDetails.ADD_NEW, "false");
         params.set("grant_type", "password");
-        
+
         String redirect = resource.getPreEstablishedRedirectUri();
         if (redirect != null) {
             params.set("redirect_uri", redirect);
@@ -420,7 +440,7 @@ public class LoginServerSecurityIntegrationTests {
         @SuppressWarnings("rawtypes")
         ResponseEntity<Map> response = serverRunning.postForMap(serverRunning.getAccessTokenUri(), params, headers);
         HttpStatus statusCode = response.getStatusCode();
-        
+
         assertTrue("Status code should be 401 or 403.", statusCode==HttpStatus.FORBIDDEN || statusCode==HttpStatus.UNAUTHORIZED);
     }
 
@@ -430,7 +450,7 @@ public class LoginServerSecurityIntegrationTests {
         String authHeader = "Basic " + new String( encodedAuth );
         return authHeader;
     }
-        
+
 
     private static class LoginClient extends ClientCredentialsResourceDetails {
         @SuppressWarnings("unused")

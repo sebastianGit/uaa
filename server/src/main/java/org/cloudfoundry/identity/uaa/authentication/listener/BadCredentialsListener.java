@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2016] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -15,6 +15,7 @@ package org.cloudfoundry.identity.uaa.authentication.listener;
 import org.cloudfoundry.identity.uaa.authentication.UaaAuthenticationDetails;
 import org.cloudfoundry.identity.uaa.authentication.event.PrincipalAuthenticationFailureEvent;
 import org.cloudfoundry.identity.uaa.authentication.event.PrincipalNotFoundEvent;
+import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.ApplicationEventPublisherAware;
 import org.springframework.context.ApplicationListener;
@@ -24,7 +25,7 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 /**
  * Spring {@code ApplicationListener} which picks up the listens for Spring
  * Security events and relays them.
- * 
+ *
  * @author Dave Syer
  */
 public class BadCredentialsListener implements ApplicationListener<AuthenticationFailureBadCredentialsEvent>,
@@ -43,10 +44,10 @@ public class BadCredentialsListener implements ApplicationListener<Authenticatio
         String principal = bce.getAuthentication().getName();
         UaaAuthenticationDetails details = (UaaAuthenticationDetails) bce.getAuthentication().getDetails();
         if (bce.getException() instanceof UsernameNotFoundException) {
-            publisher.publishEvent(new PrincipalNotFoundEvent(principal, details));
+            publisher.publishEvent(new PrincipalNotFoundEvent(principal, details, IdentityZoneHolder.getCurrentZoneId()));
         }
         else {
-            publisher.publishEvent(new PrincipalAuthenticationFailureEvent(principal, details));
+            publisher.publishEvent(new PrincipalAuthenticationFailureEvent(principal, details, IdentityZoneHolder.getCurrentZoneId()));
         }
     }
 

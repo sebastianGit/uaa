@@ -14,8 +14,11 @@ package org.cloudfoundry.identity.uaa.integration.feature;
 
 import com.dumbster.smtp.SimpleSmtpServer;
 import com.dumbster.smtp.SmtpMessage;
+import org.cloudfoundry.identity.uaa.constants.OriginKeys;
+import org.cloudfoundry.identity.uaa.integration.util.IntegrationTestUtils;
+import org.cloudfoundry.identity.uaa.provider.IdentityProvider;
+import org.cloudfoundry.identity.uaa.provider.OIDCIdentityProviderDefinition;
 import org.junit.After;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -29,14 +32,19 @@ import org.springframework.security.oauth2.common.util.RandomValueStringGenerato
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 
+import java.net.URL;
 import java.security.SecureRandom;
+import java.util.Collections;
 import java.util.Iterator;
 
 import static org.apache.commons.lang3.StringUtils.contains;
 import static org.apache.commons.lang3.StringUtils.isEmpty;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.startsWith;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThat;
 
 @RunWith(SpringJUnit4ClassRunner.class)
 @ContextConfiguration(classes = DefaultIntegrationTestConfig.class)
@@ -82,16 +90,16 @@ public class CreateAccountIT {
         int receivedEmailSize = simpleSmtpServer.getReceivedEmailSize();
         String userEmail = startCreateUserFlow(SECRET);
 
-        Assert.assertEquals(receivedEmailSize + 1, simpleSmtpServer.getReceivedEmailSize());
+        assertEquals(receivedEmailSize + 1, simpleSmtpServer.getReceivedEmailSize());
         Iterator receivedEmail = simpleSmtpServer.getReceivedEmail();
         SmtpMessage message = (SmtpMessage) receivedEmail.next();
         receivedEmail.remove();
-        Assert.assertEquals(userEmail, message.getHeaderValue("To"));
+        assertEquals(userEmail, message.getHeaderValue("To"));
         String body = message.getBody();
-        Assert.assertThat(body, containsString("Activate your account"));
+        assertThat(body, containsString("Activate your account"));
 
-        Assert.assertEquals("Create your account", webDriver.findElement(By.tagName("h1")).getText());
-        Assert.assertEquals("Please check email for an activation link.", webDriver.findElement(By.cssSelector(".instructions-sent")).getText());
+        assertEquals("Create your account", webDriver.findElement(By.tagName("h1")).getText());
+        assertEquals("Please check email for an activation link.", webDriver.findElement(By.cssSelector(".instructions-sent")).getText());
 
         String link = testClient.extractLink(body);
         assertFalse(isEmpty(link));
@@ -99,16 +107,13 @@ public class CreateAccountIT {
         assertFalse(contains(link, "%40"));
 
         webDriver.get(link);
-        Assert.assertThat(webDriver.findElement(By.cssSelector("h1")).getText(), containsString("Where to?"));
-
-        webDriver.findElement(By.xpath("//*[text()='"+userEmail+"']")).click();
-        webDriver.findElement(By.linkText("Sign Out")).click();
+        assertThat(webDriver.findElement(By.cssSelector("h1")).getText(), not(containsString("Where to?")));
 
         webDriver.findElement(By.name("username")).sendKeys(userEmail);
         webDriver.findElement(By.name("password")).sendKeys(SECRET);
         webDriver.findElement(By.xpath("//input[@value='Sign in']")).click();
 
-        Assert.assertThat(webDriver.findElement(By.cssSelector("h1")).getText(), containsString("Where to?"));
+        assertThat(webDriver.findElement(By.cssSelector("h1")).getText(), containsString("Where to?"));
     }
 
     @Test
@@ -117,7 +122,7 @@ public class CreateAccountIT {
 
         webDriver.get(baseUrl + "/create_account?client_id=app");
 
-        Assert.assertEquals("Create your account", webDriver.findElement(By.tagName("h1")).getText());
+        assertEquals("Create your account", webDriver.findElement(By.tagName("h1")).getText());
 
         int receivedEmailSize = simpleSmtpServer.getReceivedEmailSize();
 
@@ -126,26 +131,35 @@ public class CreateAccountIT {
         webDriver.findElement(By.name("password_confirmation")).sendKeys(SECRET);
         webDriver.findElement(By.xpath("//input[@value='Send activation link']")).click();
 
-        Assert.assertEquals(receivedEmailSize + 1, simpleSmtpServer.getReceivedEmailSize());
+        assertEquals(receivedEmailSize + 1, simpleSmtpServer.getReceivedEmailSize());
         Iterator receivedEmail = simpleSmtpServer.getReceivedEmail();
         SmtpMessage message = (SmtpMessage) receivedEmail.next();
         receivedEmail.remove();
-        Assert.assertEquals(userEmail, message.getHeaderValue("To"));
-        Assert.assertThat(message.getBody(), containsString("Activate your account"));
+        assertEquals(userEmail, message.getHeaderValue("To"));
+        assertThat(message.getBody(), containsString("Activate your account"));
 
-        Assert.assertEquals("Please check email for an activation link.", webDriver.findElement(By.cssSelector(".instructions-sent")).getText());
+        assertEquals("Please check email for an activation link.", webDriver.findElement(By.cssSelector(".instructions-sent")).getText());
 
         String link = testClient.extractLink(message.getBody());
         assertFalse(isEmpty(link));
 
         webDriver.get(link);
-        Assert.assertThat(webDriver.findElement(By.cssSelector("h1")).getText(), not(containsString("Where to?")));
+        assertThat(webDriver.findElement(By.cssSelector("h1")).getText(), not(containsString("Where to?")));
+
+        webDriver.findElement(By.name("username")).sendKeys(userEmail);
+        webDriver.findElement(By.name("password")).sendKeys(SECRET);
+        webDriver.findElement(By.xpath("//input[@value='Sign in']")).click();
+
+        // Authorize the app for some scopes
+        assertEquals("Application Authorization", webDriver.findElement(By.cssSelector("h1")).getText());
+        webDriver.findElement(By.xpath("//button[text()='Authorize']")).click();
+        assertEquals("Sample Home Page", webDriver.findElement(By.cssSelector("h1")).getText());
     }
 
     @Test
     public void testEnteringContraveningPasswordShowsErrorMessage() {
         startCreateUserFlow(new RandomValueStringGenerator(260).generate());
-        Assert.assertEquals("Password must be no more than 255 characters in length.", webDriver.findElement(By.cssSelector(".alert-error")).getText());
+        assertEquals("Password must be no more than 255 characters in length.", webDriver.findElement(By.cssSelector(".alert-error")).getText());
     }
 
     private String startCreateUserFlow(String secret) {
@@ -154,7 +168,7 @@ public class CreateAccountIT {
         webDriver.get(baseUrl + "/");
         webDriver.findElement(By.xpath("//*[text()='Create account']")).click();
 
-        Assert.assertEquals("Create your account", webDriver.findElement(By.tagName("h1")).getText());
+        assertEquals("Create your account", webDriver.findElement(By.tagName("h1")).getText());
 
 
         webDriver.findElement(By.name("email")).sendKeys(userEmail);
@@ -163,5 +177,29 @@ public class CreateAccountIT {
 
         webDriver.findElement(By.xpath("//input[@value='Send activation link']")).click();
         return userEmail;
+    }
+
+    @Test
+    public void testEmailDomainRegisteredWithIDPDoesNotAllowAccountCreation() throws Exception {
+        String adminToken = IntegrationTestUtils.getClientCredentialsToken(baseUrl, "admin", "adminsecret");
+        IdentityProvider<OIDCIdentityProviderDefinition> oidcProvider = new IdentityProvider().setName("oidc_provider").setActive(true).setType(OriginKeys.OIDC10).setOriginKey(OriginKeys.OIDC10).setConfig(new OIDCIdentityProviderDefinition());
+        oidcProvider.getConfig().setAuthUrl(new URL("http://example.com"));
+        oidcProvider.getConfig().setShowLinkText(false);
+        oidcProvider.getConfig().setTokenUrl(new URL("http://localhost:8080/uaa/idp_login"));
+        oidcProvider.getConfig().setTokenKeyUrl(new URL("http://localhost:8080/uaa/idp_login"));
+        oidcProvider.getConfig().setEmailDomain(Collections.singletonList("example.com"));
+        oidcProvider.getConfig().setRelyingPartyId("client_id");
+        oidcProvider.getConfig().setRelyingPartySecret("client_secret");
+        IntegrationTestUtils.createOrUpdateProvider(adminToken, baseUrl, oidcProvider);
+        try {
+
+            startCreateUserFlow("test");
+
+            assertEquals("Account sign-up is not required for this email domain. Please login with the identity provider", webDriver.findElement(By.cssSelector(".alert-error")).getText());
+            webDriver.findElement(By.xpath("//input[@value='Login with provider']")).click();
+            assertThat(webDriver.getCurrentUrl(), startsWith(oidcProvider.getConfig().getAuthUrl().toString()));
+        } finally {
+            IntegrationTestUtils.deleteProvider(adminToken, baseUrl, OriginKeys.UAA, OriginKeys.OIDC10);
+        }
     }
 }

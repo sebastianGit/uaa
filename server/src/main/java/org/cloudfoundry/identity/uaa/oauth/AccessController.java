@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2016] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -12,21 +12,21 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.oauth;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.cloudfoundry.identity.uaa.approval.Approval;
 import org.cloudfoundry.identity.uaa.approval.ApprovalStore;
 import org.cloudfoundry.identity.uaa.authentication.Origin;
-import org.cloudfoundry.identity.uaa.constants.OriginKeys;
 import org.cloudfoundry.identity.uaa.oauth.client.ClientConstants;
 import org.cloudfoundry.identity.uaa.scim.ScimGroup;
 import org.cloudfoundry.identity.uaa.scim.ScimGroupProvisioning;
+import org.cloudfoundry.identity.uaa.zone.MultitenantClientServices;
+import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
 import org.springframework.security.authentication.InsufficientAuthenticationException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.common.util.OAuth2Utils;
 import org.springframework.security.oauth2.provider.AuthorizationRequest;
 import org.springframework.security.oauth2.provider.ClientDetails;
-import org.springframework.security.oauth2.provider.ClientDetailsService;
 import org.springframework.security.oauth2.provider.client.BaseClientDetails;
 import org.springframework.stereotype.Controller;
 import org.springframework.util.StringUtils;
@@ -39,7 +39,6 @@ import org.springframework.web.context.request.WebRequest;
 import javax.servlet.http.HttpServletRequest;
 import java.security.Principal;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -51,18 +50,18 @@ import java.util.Set;
 /**
  * Controller for retrieving the model for and displaying the confirmation page
  * for access to a protected resource.
- * 
+ *
  * @author Dave Syer
  */
 @Controller
 @SessionAttributes("authorizationRequest")
 public class AccessController {
 
-    protected final Log logger = LogFactory.getLog(getClass());
+    protected final Logger logger = LoggerFactory.getLogger(getClass());
 
     private static final String SCOPE_PREFIX = "scope.";
 
-    private ClientDetailsService clientDetailsService;
+    private MultitenantClientServices clientDetailsService;
 
     private Boolean useSsl;
 
@@ -75,7 +74,7 @@ public class AccessController {
      * "https", even if the incoming request is
      * "http" (e.g. when downstream of the SSL termination behind a load
      * balancer).
-     * 
+     *
      * @param useSsl the flag to set (null to use the incoming request to
      *            determine the URL scheme)
      */
@@ -83,7 +82,7 @@ public class AccessController {
         this.useSsl = useSsl;
     }
 
-    public void setClientDetailsService(ClientDetailsService clientDetailsService) {
+    public void setClientDetailsService(MultitenantClientServices clientDetailsService) {
         this.clientDetailsService = clientDetailsService;
     }
 
@@ -114,12 +113,10 @@ public class AccessController {
         if (clientAuthRequest == null) {
             model.put("error",
                             "No authorization request is present, so we cannot confirm access (we don't know what you are asking for).");
-            // response.sendError(HttpServletResponse.SC_BAD_REQUEST);
         }
         else {
             String clientId = clientAuthRequest.getClientId();
-            ClientDetails client = clientDetailsService.loadClientByClientId(clientId);
-            // TODO: Need to fix the copy constructor to copy additionalInfo
+            BaseClientDetails client = (BaseClientDetails) clientDetailsService.loadClientByClientId(clientId, IdentityZoneHolder.get().getId());
             BaseClientDetails modifiableClient = new BaseClientDetails(client);
             modifiableClient.setClientSecret(null);
             model.put("auth_request", clientAuthRequest);
@@ -130,20 +127,19 @@ public class AccessController {
             model.put("client_display_name", (clientDisplayName != null)? clientDisplayName : clientId);
 
             // Find the auto approved scopes for this clients
-            Object autoApproved = additionalInfo.get(ClientConstants.AUTO_APPROVE);
-            Set<String> autoApprovedScopes = new HashSet<String>();
-            if (autoApproved instanceof Collection<?>) {
-                @SuppressWarnings("unchecked")
-                Collection<? extends String> scopes = (Collection<? extends String>) autoApproved;
-                autoApprovedScopes.addAll(scopes);
-            }
-            else if (autoApproved instanceof Boolean && (Boolean) autoApproved || "true".equals(autoApproved)) {
-                autoApprovedScopes.addAll(modifiableClient.getScope());
+            Set<String> autoApproved = client.getAutoApproveScopes();
+            Set<String> autoApprovedScopes = new HashSet<>();
+            if (autoApproved != null) {
+                if(autoApproved.contains("true")) {
+                    autoApprovedScopes.addAll(client.getScope());
+                } else {
+                    autoApprovedScopes.addAll(autoApproved);
+                }
             }
 
             List<Approval> filteredApprovals = new ArrayList<Approval>();
             // Remove auto approved scopes
-            List<Approval> approvals = approvalStore.getApprovals(Origin.getUserId((Authentication)principal), clientId);
+            List<Approval> approvals = approvalStore.getApprovals(Origin.getUserId((Authentication)principal), clientId, IdentityZoneHolder.get().getId());
             for (Approval approval : approvals) {
                 if (!(autoApprovedScopes.contains(approval.getScope()))) {
                     filteredApprovals.add(approval);
@@ -226,18 +222,12 @@ public class AccessController {
 
         List<Map<String, String>> result = new ArrayList<Map<String, String>>();
         for (String scope : scopes) {
-
-
-            String[] tokens = scope.split("\\.");
-            String resource = tokens[0];
-
-            if(OriginKeys.UAA.equals(resource)) { continue; }
-
             HashMap<String, String> map = new HashMap<String, String>();
             String code = SCOPE_PREFIX + scope;
             map.put("code", code);
 
-            Optional<ScimGroup> group = groupProvisioning.query(String.format("displayName eq \"%s\"", scope)).stream().findFirst();
+            String zoneId = IdentityZoneHolder.get().getId();
+            Optional<ScimGroup> group = Optional.of(groupProvisioning.getByName(scope, zoneId));
             group.ifPresent(g -> {
                 String description = g.getDescription();
                 if (StringUtils.hasText(description)) {
@@ -267,7 +257,6 @@ public class AccessController {
     private String getRedirectUri(ClientDetails client, AuthorizationRequest clientAuth) {
         String result = null;
         if (clientAuth.getRedirectUri() != null) {
-            //TODO - SHOULD WE ALLOW THIS??
             result = clientAuth.getRedirectUri();
         }
         if (client.getRegisteredRedirectUri() != null && !client.getRegisteredRedirectUri().isEmpty() && result == null) {

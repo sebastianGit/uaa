@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2016] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -18,7 +18,6 @@ import org.cloudfoundry.identity.uaa.scim.ScimUser;
 import org.cloudfoundry.identity.uaa.scim.ScimUser.Group;
 import org.cloudfoundry.identity.uaa.test.TestAccountSetup;
 import org.cloudfoundry.identity.uaa.test.UaaTestAccounts;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -47,7 +46,7 @@ import static org.junit.Assert.assertNotNull;
 /**
  * Integration test to verify that the userid translation use cases are
  * supported adequately for cf.
- * 
+ *
  * @author Luke Taylor
  */
 @OAuth2ContextConfiguration(OAuth2ContextConfiguration.Implicit.class)
@@ -75,14 +74,10 @@ public class CfUserIdTranslationEndpointIntegrationTests {
     @BeforeOAuth2Context
     @OAuth2ContextConfiguration(OAuth2ContextConfiguration.ClientCredentials.class)
     public void setUpUserAccounts() {
-
-        // If running against vcap we don't want to run these tests because they
-        // create new user accounts
-        Assume.assumeTrue(!testAccounts.isProfileActive("vcap"));
-
         RestOperations client = serverRunning.getRestTemplate();
 
         ScimUser user = new ScimUser();
+        user.setPassword("password");
         user.setUserName(JOE);
         user.setName(new ScimUser.Name("Joe", "User"));
         user.addEmail("joe@blah.com");

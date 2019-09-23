@@ -16,14 +16,16 @@ package org.cloudfoundry.identity.uaa.oauth;
 
 
 import com.fasterxml.jackson.core.type.TypeReference;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.cloudfoundry.identity.uaa.authentication.UaaAuthentication;
 import org.cloudfoundry.identity.uaa.authentication.UaaAuthenticationDetails;
 import org.cloudfoundry.identity.uaa.authentication.UaaPrincipal;
 import org.cloudfoundry.identity.uaa.util.JsonUtils;
 import org.cloudfoundry.identity.uaa.util.UaaStringUtils;
+import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DeadlockLoserDataAccessException;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -65,17 +67,17 @@ public class UaaTokenStore implements AuthorizationCodeServices {
     public static final String OAUTH2_REQUEST_REDIRECT_URI = "oauth2Request.redirectUri";
     public static final String OAUTH2_REQUEST_RESPONSE_TYPES = "oauth2Request.responseTypes";
 
-    protected static Log logger = LogFactory.getLog(UaaTokenStore.class);
+    protected static Logger logger = LoggerFactory.getLogger(UaaTokenStore.class);
 
     private static final String SQL_SELECT_STATEMENT = "select code, user_id, client_id, expiresat, created, authentication from oauth_code where code = ?";
-    private static final String SQL_INSERT_STATEMENT = "insert into oauth_code (code, user_id, client_id, expiresat, authentication) values (?, ?, ?, ?, ?)";
+    private static final String SQL_INSERT_STATEMENT = "insert into oauth_code (code, user_id, client_id, expiresat, authentication, identity_zone_id) values (?, ?, ?, ?, ?, ?)";
     private static final String SQL_DELETE_STATEMENT = "delete from oauth_code where code = ?";
     private static final String SQL_EXPIRE_STATEMENT = "delete from oauth_code where expiresat > 0 AND expiresat < ?";
     private static final String SQL_CLEAN_STATEMENT = "delete from oauth_code where created < ? and expiresat = 0";
 
     private final DataSource dataSource;
     private final long expirationTime;
-    private final RandomValueStringGenerator generator = new RandomValueStringGenerator();
+    private final RandomValueStringGenerator generator = new RandomValueStringGenerator(10);
     private final RowMapper rowMapper = new TokenCodeRowMapper();
 
     private final AtomicLong lastClean = new AtomicLong(0);
@@ -104,8 +106,8 @@ public class UaaTokenStore implements AuthorizationCodeServices {
                 SqlLobValue data = new SqlLobValue(serializeOauth2Authentication(authentication));
                 int updated = template.update(
                     SQL_INSERT_STATEMENT,
-                    new Object[] {code, userId, clientId, expiresAt, data},
-                    new int[] {Types.VARCHAR,Types.VARCHAR, Types.VARCHAR, Types.NUMERIC, Types.BLOB}
+                    new Object[] {code, userId, clientId, expiresAt, data, IdentityZoneHolder.get().getId()},
+                    new int[] {Types.VARCHAR,Types.VARCHAR, Types.VARCHAR, Types.NUMERIC, Types.BLOB, Types.VARCHAR}
                 );
                 if (updated==0) {
                     throw new DataIntegrityViolationException("[oauth_code] Failed to insert code. Result was 0");
@@ -215,11 +217,15 @@ public class UaaTokenStore implements AuthorizationCodeServices {
         if ((System.currentTimeMillis()-last) > getExpirationTime()) {
             //avoid concurrent deletes from the same UAA - performance improvement
             if (lastClean.compareAndSet(last, last+getExpirationTime())) {
-                JdbcTemplate template = new JdbcTemplate(dataSource);
-                int expired = template.update(SQL_EXPIRE_STATEMENT, System.currentTimeMillis());
-                logger.debug("[oauth_code] Removed "+expired+" expired entries.");
-                expired = template.update(SQL_CLEAN_STATEMENT, new Timestamp(System.currentTimeMillis()-LEGACY_CODE_EXPIRATION_TIME));
-                logger.debug("[oauth_code] Removed "+expired+" old entries.");
+                try {
+                    JdbcTemplate template = new JdbcTemplate(dataSource);
+                    int expired = template.update(SQL_EXPIRE_STATEMENT, System.currentTimeMillis());
+                    logger.debug("[oauth_code] Removed "+expired+" expired entries.");
+                    expired = template.update(SQL_CLEAN_STATEMENT, new Timestamp(System.currentTimeMillis()-LEGACY_CODE_EXPIRATION_TIME));
+                    logger.debug("[oauth_code] Removed "+expired+" old entries.");
+                } catch (DeadlockLoserDataAccessException e) {
+                    logger.debug("[oauth code] Deadlock trying to expire entries, ignored.");
+                }
             }
         }
 

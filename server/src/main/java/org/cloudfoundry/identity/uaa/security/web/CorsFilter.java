@@ -13,8 +13,9 @@
 
 package org.cloudfoundry.identity.uaa.security.web;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.cloudfoundry.identity.uaa.zone.CorsConfiguration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -49,6 +50,7 @@ import static org.springframework.http.HttpHeaders.ORIGIN;
 import static org.springframework.http.HttpMethod.DELETE;
 import static org.springframework.http.HttpMethod.GET;
 import static org.springframework.http.HttpMethod.OPTIONS;
+import static org.springframework.http.HttpMethod.PATCH;
 import static org.springframework.http.HttpMethod.POST;
 import static org.springframework.http.HttpMethod.PUT;
 import static org.springframework.http.HttpStatus.BAD_REQUEST;
@@ -76,96 +78,9 @@ import static org.springframework.http.HttpStatus.METHOD_NOT_ALLOWED;
  */
 public class CorsFilter extends OncePerRequestFilter {
 
-    static final Log logger = LogFactory.getLog(CorsFilter.class);
+    static final Logger logger = LoggerFactory.getLogger(CorsFilter.class);
     public static final String X_REQUESTED_WITH = "X-Requested-With";
-    public static final int ACCESS_CONTROL_MAX_AGE_DEFAULT = 1728000;
     public static final String WILDCARD = "*";
-
-    public static class CorsConfiguration {
-        /**
-         * A comma delimited list of regular expression patterns that define which
-         * origins are allowed to use the "X-Requested-With" header in CORS
-         * requests.
-         */
-        private List<String> allowedOrigins = Arrays.asList(".*");
-        private final List<Pattern> allowedOriginPatterns = new ArrayList<>();
-
-        /**
-         * A comma delimited list of regular expression patterns that defines which
-         * UAA URIs allow the "X-Requested-With" header in CORS requests.
-         */
-        private List<String> allowedUris = Arrays.asList(".*");
-        private final List<Pattern> allowedUriPatterns = new ArrayList<>();
-
-        /**
-         * A comma delimited list of regular expression patterns that define which
-         * origins are allowed to use the "X-Requested-With" header in CORS
-         * requests.
-         */
-        private List<String> allowedHeaders = Arrays.asList(ACCEPT, AUTHORIZATION, CONTENT_TYPE);
-
-        private List<String> allowedMethods = Arrays.asList(GET.toString());
-
-        private boolean allowedCredentials = false;
-
-        private int maxAge = ACCESS_CONTROL_MAX_AGE_DEFAULT;
-
-        public boolean isAllowedCredentials() {
-            return allowedCredentials;
-        }
-
-        public void setAllowedCredentials(boolean allowedCredentials) {
-            this.allowedCredentials = allowedCredentials;
-        }
-
-        public List<String> getAllowedHeaders() {
-            return allowedHeaders;
-        }
-
-        public void setAllowedHeaders(List<String> allowedHeaders) {
-            this.allowedHeaders = allowedHeaders;
-        }
-
-        public List<String> getAllowedMethods() {
-            return allowedMethods;
-        }
-
-        public void setAllowedMethods(List<String> allowedMethods) {
-            this.allowedMethods = allowedMethods;
-        }
-
-        public List<Pattern> getAllowedOriginPatterns() {
-            return allowedOriginPatterns;
-        }
-
-        public List<String> getAllowedOrigins() {
-            return allowedOrigins;
-        }
-
-        public void setAllowedOrigins(List<String> allowedOrigins) {
-            this.allowedOrigins = allowedOrigins;
-        }
-
-        public List<Pattern> getAllowedUriPatterns() {
-            return allowedUriPatterns;
-        }
-
-        public List<String> getAllowedUris() {
-            return allowedUris;
-        }
-
-        public void setAllowedUris(List<String> allowedUris) {
-            this.allowedUris = allowedUris;
-        }
-
-        public int getMaxAge() {
-            return maxAge;
-        }
-
-        public void setMaxAge(int maxAge) {
-            this.maxAge = maxAge;
-        }
-    }
 
     private CorsConfiguration xhrConfiguration = new CorsConfiguration();
     private CorsConfiguration defaultConfiguration = new CorsConfiguration();
@@ -173,7 +88,7 @@ public class CorsFilter extends OncePerRequestFilter {
     public CorsFilter() {
         //configure defaults for XHR vs non-XHR requests
         xhrConfiguration.setAllowedMethods(Arrays.asList(GET.toString(), OPTIONS.toString()));
-        defaultConfiguration.setAllowedMethods(Arrays.asList(GET.toString(), OPTIONS.toString(), POST.toString(), PUT.toString(), DELETE.toString()));
+        defaultConfiguration.setAllowedMethods(Arrays.asList(GET.toString(), OPTIONS.toString(), POST.toString(), PUT.toString(), DELETE.toString(), PATCH.toString()));
 
         xhrConfiguration.setAllowedHeaders(Arrays.asList(ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, CONTENT_LANGUAGE,AUTHORIZATION, X_REQUESTED_WITH));
         defaultConfiguration.setAllowedHeaders(Arrays.asList(ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, CONTENT_LANGUAGE,AUTHORIZATION));
@@ -321,7 +236,6 @@ public class CorsFilter extends OncePerRequestFilter {
      * @return true if the `Origin` header is present
      */
     protected boolean isCrossOriginRequest(final HttpServletRequest request) {
-        //TODO what about SAME origin requests that actually have the Origin header present?
         //presence of the origin header indicates CORS request
         return StringUtils.hasText(request.getHeader(ORIGIN));
     }

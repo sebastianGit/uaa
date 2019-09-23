@@ -15,8 +15,8 @@ package org.cloudfoundry.identity.uaa.zone.event;
 import org.cloudfoundry.identity.uaa.audit.AuditEvent;
 import org.cloudfoundry.identity.uaa.audit.AuditEventType;
 import org.cloudfoundry.identity.uaa.audit.event.AbstractUaaEvent;
-import org.cloudfoundry.identity.uaa.util.JsonUtils;
 import org.cloudfoundry.identity.uaa.zone.IdentityZone;
+import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
 import org.springframework.security.core.Authentication;
 
 public class IdentityZoneModifiedEvent extends AbstractUaaEvent {
@@ -25,25 +25,37 @@ public class IdentityZoneModifiedEvent extends AbstractUaaEvent {
 
     private AuditEventType eventType;
 
-    public IdentityZoneModifiedEvent(IdentityZone identityZone, Authentication authentication, AuditEventType type) {
-        super(identityZone, authentication);
+    protected static final String dataFormat = "id=%s; subdomain=%s";
+
+    public IdentityZoneModifiedEvent(IdentityZone identityZone, Authentication authentication, AuditEventType type, String zoneId) {
+        super(identityZone, authentication, zoneId);
         eventType = type;
     }
 
     @Override
     public AuditEvent getAuditEvent() {
-        return createAuditRecord(getSource().toString(), eventType, getOrigin(getAuthentication()),
-                JsonUtils.writeValueAsString(source));
+        IdentityZone zone = (IdentityZone)source;
+        return createAuditRecord(
+            getSource().toString(),
+            eventType,
+            getOrigin(getAuthentication()),
+            String.format(IdentityZoneModifiedEvent.dataFormat,
+                          zone.getId(),
+                          zone.getSubdomain())
+        );
     }
 
     public static IdentityZoneModifiedEvent identityZoneCreated(IdentityZone identityZone) {
         return new IdentityZoneModifiedEvent(identityZone, getContextAuthentication(),
-                AuditEventType.IdentityZoneCreatedEvent);
+                AuditEventType.IdentityZoneCreatedEvent, IdentityZoneHolder.getCurrentZoneId());
     }
 
     public static IdentityZoneModifiedEvent identityZoneModified(IdentityZone identityZone) {
         return new IdentityZoneModifiedEvent(identityZone, getContextAuthentication(),
-                AuditEventType.IdentityZoneModifiedEvent);
+                AuditEventType.IdentityZoneModifiedEvent, IdentityZoneHolder.getCurrentZoneId());
     }
 
+    public AuditEventType getEventType() {
+        return eventType;
+    }
 }

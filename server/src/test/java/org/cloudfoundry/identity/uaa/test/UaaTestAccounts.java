@@ -12,19 +12,14 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.test;
 
-import java.util.Arrays;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
-
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.cloudfoundry.identity.uaa.constants.OriginKeys;
 import org.cloudfoundry.identity.uaa.user.UaaAuthority;
 import org.cloudfoundry.identity.uaa.user.UaaUser;
 import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
 import org.springframework.core.env.Environment;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.codec.Base64;
 import org.springframework.security.oauth2.client.resource.OAuth2ProtectedResourceDetails;
 import org.springframework.security.oauth2.client.test.TestAccounts;
@@ -33,10 +28,16 @@ import org.springframework.security.oauth2.client.token.grant.code.Authorization
 import org.springframework.security.oauth2.client.token.grant.implicit.ImplicitResourceDetails;
 import org.springframework.security.oauth2.client.token.grant.password.ResourceOwnerPasswordResourceDetails;
 import org.springframework.security.oauth2.common.AuthenticationScheme;
-import org.springframework.security.oauth2.provider.client.BaseClientDetails;
 import org.springframework.security.oauth2.provider.ClientDetails;
+import org.springframework.security.oauth2.provider.client.BaseClientDetails;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.util.StringUtils;
+
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
 /**
  * UAA specific test account data externalized with
@@ -47,17 +48,16 @@ import org.springframework.util.StringUtils;
  *
  */
 public class UaaTestAccounts implements TestAccounts {
+    private static final Logger logger = LoggerFactory.getLogger(UaaTestAccounts.class);
+
+    static final String UAA_TEST_USERNAME = "uaa.test.username";
+    static final String UAA_TEST_PASSWORD = "uaa.test.password";
 
     public static final String DEFAULT_PASSWORD = "koala";
-
     public static final String DEFAULT_USERNAME = "marissa";
 
-    private static final Log logger = LogFactory.getLog(UaaTestAccounts.class);
-
     private Environment environment = TestProfileEnvironment.getEnvironment();
-
     private UrlHelper server;
-
     private static Map<String, OAuth2ProtectedResourceDetails> clientDetails = new HashMap<String, OAuth2ProtectedResourceDetails>();
 
     private UaaTestAccounts(UrlHelper server) {
@@ -70,12 +70,12 @@ public class UaaTestAccounts implements TestAccounts {
 
     @Override
     public String getUserName() {
-        return environment.getProperty("uaa.test.username", DEFAULT_USERNAME);
+        return environment.getProperty(UAA_TEST_USERNAME, DEFAULT_USERNAME);
     }
 
     @Override
     public String getPassword() {
-        return environment.getProperty("uaa.test.password", DEFAULT_PASSWORD);
+        return environment.getProperty(UAA_TEST_PASSWORD, DEFAULT_PASSWORD);
     }
 
     @Override
@@ -114,10 +114,6 @@ public class UaaTestAccounts implements TestAccounts {
     public boolean isProfileActive(String profile) {
         logger.debug(String.format("Checking for %s profile in: [%s]", profile, environment));
         return profile != null && environment.acceptsProfiles(profile);
-    }
-
-    public String getVarzAuthorizationHeader() {
-        return getAuthorizationHeader("varz", "varz", "varzclientsecret");
     }
 
     public String getAuthorizationHeader(String prefix, String defaultUsername, String defaultPassword) {
@@ -258,7 +254,7 @@ public class UaaTestAccounts implements TestAccounts {
 
     @Override
     public ImplicitResourceDetails getDefaultImplicitResource() {
-        return getImplicitResource("oauth.clients.cf", "cf", "https://uaa.cloudfoundry.com/redirect/cf");
+        return getImplicitResource("oauth.clients.cf", "cf", "http://localhost:8080/redirect/cf");
     }
 
     public AuthorizationCodeResourceDetails getDefaultAuthorizationCodeResource() {
@@ -271,5 +267,33 @@ public class UaaTestAccounts implements TestAccounts {
         String redirectUri = environment.getProperty("oauth.clients.app.redirect-uri", "http://localhost:8080/app/");
         result.setPreEstablishedRedirectUri(redirectUri);
         return result;
+    }
+
+    public String addUser(
+            final JdbcTemplate jdbcTemplate,
+            final String id,
+            final String zoneId) {
+        return addUser(
+                jdbcTemplate,
+                id,
+                zoneId,
+                OriginKeys.UAA
+        );
+    }
+
+    public String addUser(
+            final JdbcTemplate jdbcTemplate,
+            final String id,
+            final String zoneId,
+            final String origin) {
+        String username = id + "-testuser";
+        jdbcTemplate.update("insert into users (id, username, password, email, identity_zone_id, origin) values (?,?,?,?,?,?)",
+                id,
+                username,
+                "password",
+                username+"@test.com",
+                zoneId,
+                origin);
+        return id;
     }
 }

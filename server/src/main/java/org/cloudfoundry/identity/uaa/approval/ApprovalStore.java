@@ -1,5 +1,5 @@
 /*******************************************************************************
- *     Cloud Foundry 
+ *     Cloud Foundry
  *     Copyright (c) [2009-2016] Pivotal Software, Inc. All Rights Reserved.
  *
  *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
@@ -12,19 +12,23 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.approval;
 
-import org.cloudfoundry.identity.uaa.approval.Approval;
-
 import java.util.List;
 
 public interface ApprovalStore {
 
-    public boolean addApproval(Approval approval);
+    boolean addApproval(Approval approval, final String zoneId);
 
-    public boolean revokeApproval(Approval approval);
+    boolean revokeApproval(Approval approval, final String zoneId);
 
-    public boolean revokeApprovals(String filter);
+    boolean revokeApprovalsForUser(String userId, final String zoneId);
 
-    public List<Approval> getApprovals(String filter);
+    boolean revokeApprovalsForClient(String clientId, final String zoneId);
 
-    public List<Approval> getApprovals(String userId, String clientId);
+    boolean revokeApprovalsForClientAndUser(String clientId, String userId, final String zoneId);
+
+    List<Approval> getApprovals(String userId, String clientId, final String zoneId);
+
+    List<Approval> getApprovalsForUser(String userId, final String zoneId);
+
+    List<Approval> getApprovalsForClient(String clientId, final String zoneId);
 }

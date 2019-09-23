@@ -15,8 +15,8 @@
 
 package org.cloudfoundry.identity.uaa.authentication.manager;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.cloudfoundry.identity.uaa.user.UaaAuthority;
 import org.cloudfoundry.identity.uaa.util.LinkedMaskingMultiValueMap;
 import org.springframework.http.HttpEntity;
@@ -53,7 +53,7 @@ import java.util.Map;
  */
 public class RestAuthenticationManager implements AuthenticationManager {
 
-    protected final Log logger = LogFactory.getLog(getClass());
+    protected final Logger logger = LoggerFactory.getLogger(getClass());
 
     private RestOperations restTemplate = new RestTemplate();
 
@@ -114,7 +114,6 @@ public class RestAuthenticationManager implements AuthenticationManager {
         if (response.getStatusCode() == HttpStatus.OK || response.getStatusCode() == HttpStatus.CREATED) {
             if (evaluateResponse(authentication,response)) {
                 logger.info("Successful authentication request for " + authentication.getName());
-                //TODO - we can return a UAA principal containing the correct origin here.
                 return new UsernamePasswordAuthenticationToken(username, nullPassword?null:"", UaaAuthority.USER_AUTHORITIES);
             }
         } else if (response.getStatusCode() == HttpStatus.UNAUTHORIZED) {
@@ -131,11 +130,7 @@ public class RestAuthenticationManager implements AuthenticationManager {
 
     protected boolean evaluateResponse(Authentication authentication, ResponseEntity<Map> response) {
         String userFromUaa = (String) response.getBody().get("username");
-        if (userFromUaa.equals(authentication.getPrincipal().toString())) {
-            return true;
-        } else {
-            return false;
-        }
+        return userFromUaa.equals(authentication.getPrincipal().toString());
     }
 
     protected Object getParameters(String username, String password) {

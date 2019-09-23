@@ -1,20 +1,12 @@
-/*******************************************************************************
- *     Cloud Foundry
- *     Copyright (c) [2009-2016] Pivotal Software, Inc. All Rights Reserved.
- *
- *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
- *     You may not use this product except in compliance with the License.
- *
- *     This product includes a number of subcomponents with
- *     separate copyright notices and license terms. Your use of these
- *     subcomponents is subject to the terms and conditions of the
- *     subcomponent's license, as noted in the LICENSE file.
- *******************************************************************************/
 package org.cloudfoundry.identity.uaa.zone;
 
 import org.cloudfoundry.identity.uaa.provider.saml.SamlKeyManagerFactory;
 import org.springframework.security.saml.key.KeyManager;
 
+/**
+ * @Deprecated Use {@link org.cloudfoundry.identity.uaa.zone.beans.IdentityZoneManager} instead
+ */
+@Deprecated
 public class IdentityZoneHolder {
 
     private static IdentityZoneProvisioning provisioning;
@@ -23,78 +15,70 @@ public class IdentityZoneHolder {
         IdentityZoneHolder.provisioning = provisioning;
     }
 
-    private static final ThreadLocal<IdentityZoneWithKeyManager> THREADLOCAL = new InheritableThreadLocal<IdentityZoneWithKeyManager>() {
-        @Override
-        protected IdentityZoneWithKeyManager initialValue() {
-            if (provisioning==null) {
-                return new IdentityZoneWithKeyManager(IdentityZone.getUaa(), null);
-            }
-            IdentityZone zone = getUaaZone();
-            return new IdentityZoneWithKeyManager(zone, null);
-        }
-    };
+    private static SamlKeyManagerFactory samlKeyManagerFactory = new SamlKeyManagerFactory();
+
+    private static final ThreadLocal<IdentityZone> IDENTITY_ZONE_THREAD_LOCAL = InheritableThreadLocal
+            .withInitial(() -> getUaaZone(provisioning));
 
     public static IdentityZone get() {
-        return THREADLOCAL.get().getZone();
+        return IDENTITY_ZONE_THREAD_LOCAL.get();
     }
 
+    private static final ThreadLocal<KeyManager> KEY_MANAGER_THREAD_LOCAL = InheritableThreadLocal.withInitial(() -> null);
+
     public static KeyManager getSamlSPKeyManager() {
-        IdentityZoneWithKeyManager withKeyManager = THREADLOCAL.get();
-        if (withKeyManager.getManager()==null) {
-            KeyManager keyManager = SamlKeyManagerFactory.getKeyManager(withKeyManager.getZone().getConfig().getSamlConfig());
-            if (keyManager==null) {
-                keyManager = SamlKeyManagerFactory.getKeyManager(getUaaZone().getConfig().getSamlConfig());
-            }
-            withKeyManager.setManager(keyManager);
+        KeyManager keyManager = KEY_MANAGER_THREAD_LOCAL.get();
+        if (keyManager != null) {
+            return keyManager;
         }
-        return withKeyManager.getManager();
+
+        keyManager = samlKeyManagerFactory.getKeyManager(IDENTITY_ZONE_THREAD_LOCAL.get().getConfig().getSamlConfig());
+        if (keyManager != null) {
+            KEY_MANAGER_THREAD_LOCAL.set(keyManager);
+            return keyManager;
+        }
+
+        keyManager = samlKeyManagerFactory.getKeyManager(getUaaZone(provisioning).getConfig().getSamlConfig());
+        KEY_MANAGER_THREAD_LOCAL.set(keyManager);
+        return keyManager;
     }
 
     public static IdentityZone getUaaZone() {
-        if (provisioning==null) {
+        return getUaaZone(provisioning);
+    }
+
+    private static IdentityZone getUaaZone(IdentityZoneProvisioning provisioning) {
+        if (provisioning == null) {
             return IdentityZone.getUaa();
         }
-        return provisioning.retrieve(IdentityZone.getUaa().getId());
+        return provisioning.retrieve(IdentityZone.getUaaZoneId());
     }
 
     public static void set(IdentityZone zone) {
-        THREADLOCAL.set(new IdentityZoneWithKeyManager(zone, null));
+        IDENTITY_ZONE_THREAD_LOCAL.set(zone);
+        KEY_MANAGER_THREAD_LOCAL.set(null);
     }
 
     public static void clear() {
-        THREADLOCAL.remove();
+        IDENTITY_ZONE_THREAD_LOCAL.remove();
+        KEY_MANAGER_THREAD_LOCAL.remove();
     }
-    
+
     public static boolean isUaa() {
-        return THREADLOCAL.get().getZone().getId().equals(IdentityZone.getUaa().getId());
+        return IDENTITY_ZONE_THREAD_LOCAL.get().isUaa();
+    }
+
+    public static String getCurrentZoneId() {
+        return IDENTITY_ZONE_THREAD_LOCAL.get().getId();
     }
 
     public static class Initializer {
         public Initializer(IdentityZoneProvisioning provisioning) {
             IdentityZoneHolder.setProvisioning(provisioning);
         }
-    }
 
-    public static class IdentityZoneWithKeyManager {
-        private IdentityZone zone;
-        private KeyManager manager;
-
-        public IdentityZoneWithKeyManager(IdentityZone zone, KeyManager manager) {
-            this.zone = zone;
-            this.manager = manager;
-        }
-
-        public IdentityZone getZone() {
-            return zone;
-        }
-
-        public KeyManager getManager() {
-            return manager;
-        }
-
-        public void setManager(KeyManager manager) {
-            this.manager = manager;
+        public void reset() {
+            IdentityZoneHolder.setProvisioning(null);
         }
     }
-
 }

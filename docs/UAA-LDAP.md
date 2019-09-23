@@ -1,6 +1,5 @@
-==================================================
-User Account and Authentication LDAP Integration
-==================================================
+
+# User Account and Authentication LDAP Integration
 
 # Overview
 UAA integrates with the Lightweight Directory Access Protocol in two major areas. 
@@ -441,6 +440,10 @@ ldap:
 </pre>
 
 ### Populating External Group Mappings
+Once you have configured UAA to map Ldap Groups to Scopes, you can use the Cloud Controller API to manage the group mappings:
+* [List External Group mapping](https://github.com/cloudfoundry/uaa/blob/master/docs/UAA-APIs.rst#list-external-group-mapping-get-groups-external)
+* [Create a Group mapping](https://github.com/cloudfoundry/uaa/blob/master/docs/UAA-APIs.rst#create-a-group-mapping-post-groups-external)
+* [Remove a group mapping](https://github.com/cloudfoundry/uaa/blob/master/docs/UAA-APIs.rst#remove-a-group-mapping-delete-groups-external-displayname-displayname-externalgroup-externalgroup-origin-origin)
 
 # LDAP Email integration
 As you may have noticed through the different examples, the property `ldap.base.mailAttributeName` is always 
@@ -509,7 +512,7 @@ In the above example, the user `marissa`'s  UAA email always become `generated-m
 * <a name="ldap.base.url">`ldap.base.url`</a> 
   A URL pointing to the LDAP server, must start with `ldap://` or `ldaps://`
   When using SSL, an ldaps URL, the certificate must be trusted, or be imported in the JVM
-  trust store.
+  trust store. The string value may contain multiple LDAP URLs, space delimited.
   <br/>This property is always used.
 
 

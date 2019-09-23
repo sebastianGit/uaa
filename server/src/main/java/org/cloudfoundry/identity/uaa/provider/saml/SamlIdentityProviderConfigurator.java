@@ -12,10 +12,6 @@
  *******************************************************************************/
 package org.cloudfoundry.identity.uaa.provider.saml;
 
-import org.apache.commons.httpclient.params.HttpClientParams;
-import org.apache.commons.httpclient.protocol.ProtocolSocketFactory;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.apache.http.client.utils.URIBuilder;
 import org.cloudfoundry.identity.uaa.constants.OriginKeys;
 import org.cloudfoundry.identity.uaa.provider.IdentityProvider;
@@ -33,33 +29,17 @@ import org.springframework.util.StringUtils;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
-import java.util.Date;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Timer;
-import java.util.TimerTask;
 
 import static org.springframework.util.StringUtils.hasText;
 
 public class SamlIdentityProviderConfigurator implements InitializingBean {
-    private static Log logger = LogFactory.getLog(SamlIdentityProviderConfigurator.class);
-    private HttpClientParams clientParams;
     private BasicParserPool parserPool;
     private IdentityProviderProvisioning providerProvisioning;
-
-    private Timer dummyTimer = new Timer() {
-        @Override public void cancel() { super.cancel(); }
-        @Override public int purge() {return 0; }
-        @Override public void schedule(TimerTask task, long delay) {}
-        @Override public void schedule(TimerTask task, long delay, long period) {}
-        @Override public void schedule(TimerTask task, Date firstTime, long period) {}
-        @Override public void schedule(TimerTask task, Date time) {}
-        @Override public void scheduleAtFixedRate(TimerTask task, long delay, long period) {}
-        @Override public void scheduleAtFixedRate(TimerTask task, Date firstTime, long period) {}
-    };
+    private FixedHttpMetaDataProvider fixedHttpMetaDataProvider;
 
     public SamlIdentityProviderConfigurator() {
-        dummyTimer.cancel();
     }
 
     public List<SamlIdentityProviderDefinition> getIdentityProviderDefinitions() {
@@ -68,7 +48,7 @@ public class SamlIdentityProviderConfigurator implements InitializingBean {
 
     public List<SamlIdentityProviderDefinition> getIdentityProviderDefinitionsForZone(IdentityZone zone) {
         List<SamlIdentityProviderDefinition> result = new LinkedList<>();
-        for (IdentityProvider provider: providerProvisioning.retrieveActive(zone.getId())) {
+        for (IdentityProvider provider : providerProvisioning.retrieveActive(zone.getId())) {
             if (OriginKeys.SAML.equals(provider.getType())) {
                 result.add((SamlIdentityProviderDefinition) provider.getConfig());
             }
@@ -92,13 +72,13 @@ public class SamlIdentityProviderConfigurator implements InitializingBean {
 
     /**
      * adds or replaces a SAML identity proviider
+     *
      * @param providerDefinition - the provider to be added
-     * @return an array consisting of {provider-added, provider-deleted} where provider-deleted may be null
      * @throws MetadataProviderException if the system fails to fetch meta data for this provider
      */
-    public synchronized ExtendedMetadataDelegate[] addSamlIdentityProviderDefinition(SamlIdentityProviderDefinition providerDefinition) throws MetadataProviderException {
-        ExtendedMetadataDelegate added, deleted=null;
-        if (providerDefinition==null) {
+    public synchronized void validateSamlIdentityProviderDefinition(SamlIdentityProviderDefinition providerDefinition) throws MetadataProviderException {
+        ExtendedMetadataDelegate added, deleted = null;
+        if (providerDefinition == null) {
             throw new NullPointerException();
         }
         if (!hasText(providerDefinition.getIdpEntityAlias())) {
@@ -109,47 +89,25 @@ public class SamlIdentityProviderConfigurator implements InitializingBean {
         }
         SamlIdentityProviderDefinition clone = providerDefinition.clone();
         added = getExtendedMetadataDelegate(clone);
-        String entityIDToBeAdded = ((ConfigMetadataProvider)added.getDelegate()).getEntityID();
+        String entityIDToBeAdded = ((ConfigMetadataProvider) added.getDelegate()).getEntityID();
         if (!StringUtils.hasText(entityIDToBeAdded)) {
-            throw new MetadataProviderException("Emtpy entityID for SAML provider with zoneId:"+providerDefinition.getZoneId()+" and origin:"+providerDefinition.getIdpEntityAlias());
+            throw new MetadataProviderException("Emtpy entityID for SAML provider with zoneId:" + providerDefinition.getZoneId() + " and origin:" + providerDefinition.getIdpEntityAlias());
         }
 
         boolean entityIDexists = false;
 
         for (SamlIdentityProviderDefinition existing : getIdentityProviderDefinitions()) {
-            ConfigMetadataProvider existingProvider = (ConfigMetadataProvider)getExtendedMetadataDelegate(existing).getDelegate();
+            ConfigMetadataProvider existingProvider = (ConfigMetadataProvider) getExtendedMetadataDelegate(existing).getDelegate();
             if (entityIDToBeAdded.equals(existingProvider.getEntityID()) &&
-                !(existing.getUniqueAlias().equals(clone.getUniqueAlias()))) {
+              !(existing.getUniqueAlias().equals(clone.getUniqueAlias()))) {
                 entityIDexists = true;
                 break;
             }
         }
 
         if (entityIDexists) {
-            throw new MetadataProviderException("Duplicate entity ID:"+entityIDToBeAdded);
+            throw new MetadataProviderException("Duplicate entity ID:" + entityIDToBeAdded);
         }
-
-        return new ExtendedMetadataDelegate[] {added, deleted};
-    }
-
-    public synchronized ExtendedMetadataDelegate removeIdentityProviderDefinition(SamlIdentityProviderDefinition providerDefinition) {
-        return null;
-    }
-
-    public List<ExtendedMetadataDelegate> getSamlIdentityProviders() {
-        return getSamlIdentityProviders(null);
-    }
-
-    public List<ExtendedMetadataDelegate> getSamlIdentityProviders(IdentityZone zone) {
-        List<ExtendedMetadataDelegate> result = new LinkedList<>();
-        for (SamlIdentityProviderDefinition def : getIdentityProviderDefinitionsForZone(zone)) {
-            try {
-                result.add(getExtendedMetadataDelegate(def));
-            } catch (MetadataProviderException e) {
-                throw new RuntimeException(e);
-            }
-        }
-        return result;
     }
 
     public ExtendedMetadataDelegate getExtendedMetadataDelegateFromCache(SamlIdentityProviderDefinition def) throws MetadataProviderException {
@@ -186,17 +144,6 @@ public class SamlIdentityProviderConfigurator implements InitializingBean {
         return delegate;
     }
 
-    protected FixedHttpMetaDataProvider getFixedHttpMetaDataProvider(SamlIdentityProviderDefinition def,
-                                                                     Timer dummyTimer,
-                                                                     HttpClientParams params) throws ClassNotFoundException, MetadataProviderException, URISyntaxException, InstantiationException, IllegalAccessException {
-        Class<ProtocolSocketFactory> socketFactory;
-        socketFactory = (Class<ProtocolSocketFactory>) Class.forName(def.getSocketFactoryClassName());
-        ExtendedMetadata extendedMetadata = new ExtendedMetadata();
-        extendedMetadata.setAlias(def.getIdpEntityAlias());
-        FixedHttpMetaDataProvider fixedHttpMetaDataProvider = FixedHttpMetaDataProvider.buildProvider(dummyTimer, getClientParams(), adjustURIForPort(def.getMetaDataLocation()));
-        fixedHttpMetaDataProvider.setSocketFactory(socketFactory.newInstance());
-        return fixedHttpMetaDataProvider;
-    }
 
     protected String adjustURIForPort(String uri) throws URISyntaxException {
         URI metadataURI = new URI(uri);
@@ -216,20 +163,14 @@ public class SamlIdentityProviderConfigurator implements InitializingBean {
     protected ExtendedMetadataDelegate configureURLMetadata(SamlIdentityProviderDefinition def) throws MetadataProviderException {
         try {
             def = def.clone();
-            ExtendedMetadata extendedMetadata = new ExtendedMetadata();
-            extendedMetadata.setAlias(def.getIdpEntityAlias());
-            FixedHttpMetaDataProvider fixedHttpMetaDataProvider = getFixedHttpMetaDataProvider(def, dummyTimer, getClientParams());
-            byte[] metadata = fixedHttpMetaDataProvider.fetchMetadata();
+            String adjustedMetatadataURIForPort = adjustURIForPort(def.getMetaDataLocation());
+
+            byte[] metadata = fixedHttpMetaDataProvider.fetchMetadata(adjustedMetatadataURIForPort, def.isSkipSslValidation());
+
             def.setMetaDataLocation(new String(metadata, StandardCharsets.UTF_8));
             return configureXMLMetadata(def);
         } catch (URISyntaxException e) {
-            throw new MetadataProviderException("Invalid socket factory(invalid URI):"+def.getMetaDataLocation(), e);
-        } catch (ClassNotFoundException e) {
-            throw new MetadataProviderException("Invalid socket factory:"+def.getSocketFactoryClassName(), e);
-        } catch (InstantiationException e) {
-            throw new MetadataProviderException("Invalid socket factory:"+def.getSocketFactoryClassName(), e);
-        } catch (IllegalAccessException e) {
-            throw new MetadataProviderException("Invalid socket factory:"+def.getSocketFactoryClassName(), e);
+            throw new MetadataProviderException("Invalid socket factory(invalid URI):" + def.getMetaDataLocation(), e);
         }
     }
 
@@ -241,13 +182,6 @@ public class SamlIdentityProviderConfigurator implements InitializingBean {
         this.providerProvisioning = providerProvisioning;
     }
 
-    public HttpClientParams getClientParams() {
-        return clientParams;
-    }
-
-    public void setClientParams(HttpClientParams clientParams) {
-        this.clientParams = clientParams;
-    }
 
     public BasicParserPool getParserPool() {
         return parserPool;
@@ -259,5 +193,9 @@ public class SamlIdentityProviderConfigurator implements InitializingBean {
 
     @Override
     public void afterPropertiesSet() throws Exception {
+    }
+
+    public void setFixedHttpMetaDataProvider(FixedHttpMetaDataProvider fixedHttpMetaDataProvider) {
+        this.fixedHttpMetaDataProvider = fixedHttpMetaDataProvider;
     }
 }

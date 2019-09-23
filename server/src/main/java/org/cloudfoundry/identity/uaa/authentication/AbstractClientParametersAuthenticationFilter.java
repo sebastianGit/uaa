@@ -14,8 +14,8 @@
  */
 package org.cloudfoundry.identity.uaa.authentication;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -52,7 +52,7 @@ public abstract class AbstractClientParametersAuthenticationFilter implements Fi
 
     public static final String CLIENT_ID = "client_id";
     public static final String CLIENT_SECRET = "client_secret";
-    protected final Log logger = LogFactory.getLog(getClass());
+    protected final Logger logger = LoggerFactory.getLogger(getClass());
 
     protected AuthenticationManager clientAuthenticationManager;
 
@@ -116,7 +116,6 @@ public abstract class AbstractClientParametersAuthenticationFilter implements Fi
     }
 
     private Authentication performClientAuthentication(HttpServletRequest req, Map<String, String> loginInfo, String clientId) {
-
         String clientSecret = loginInfo.get(CLIENT_SECRET);
         UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(clientId, clientSecret);
         authentication.setDetails(new UaaAuthenticationDetails(req, clientId));

@@ -17,18 +17,15 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
-import org.cloudfoundry.identity.uaa.impl.JsonDateSerializer;
 import org.cloudfoundry.identity.uaa.approval.Approval;
+import org.cloudfoundry.identity.uaa.impl.JsonDateSerializer;
 import org.cloudfoundry.identity.uaa.scim.impl.ScimUserJsonDeserializer;
 import org.springframework.util.Assert;
-import org.springframework.util.StringUtils;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Date;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
+
+import static java.util.Optional.ofNullable;
+import static org.springframework.util.StringUtils.hasText;
 
 /**
  * Object to hold SCIM data for Jackson to map to and from JSON
@@ -41,7 +38,7 @@ import java.util.Set;
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonDeserialize(using = ScimUserJsonDeserializer.class)
-public final class ScimUser extends ScimCore {
+public class ScimUser extends ScimCore<ScimUser> {
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public static final class Group {
@@ -49,9 +46,9 @@ public final class ScimUser extends ScimCore {
 
         String display;
 
-        public static enum Type {
+        public enum Type {
             DIRECT, INDIRECT
-        };
+        }
 
         Type type;
 
@@ -180,27 +177,27 @@ public final class ScimUser extends ScimCore {
             this.givenName = givenName;
         }
 
-        public String getMiddleName() {
+        String getMiddleName() {
             return middleName;
         }
 
-        public void setMiddleName(String middleName) {
+        void setMiddleName(String middleName) {
             this.middleName = middleName;
         }
 
-        public String getHonorificPrefix() {
+        String getHonorificPrefix() {
             return honorificPrefix;
         }
 
-        public void setHonorificPrefix(String honorificPrefix) {
+        void setHonorificPrefix(String honorificPrefix) {
             this.honorificPrefix = honorificPrefix;
         }
 
-        public String getHonorificSuffix() {
+        String getHonorificSuffix() {
             return honorificSuffix;
         }
 
-        public void setHonorificSuffix(String honorificSuffix) {
+        void setHonorificSuffix(String honorificSuffix) {
             this.honorificSuffix = honorificSuffix;
         }
 
@@ -270,6 +267,12 @@ public final class ScimUser extends ScimCore {
         // this should probably be an enum
         private String type;
 
+        public PhoneNumber(String phoneNumber) {
+            this.value = phoneNumber;
+        }
+
+        public PhoneNumber() {}
+
         public String getValue() {
             return value;
         }
@@ -286,6 +289,19 @@ public final class ScimUser extends ScimCore {
             this.type = type;
         }
 
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            PhoneNumber that = (PhoneNumber) o;
+            return Objects.equals(value, that.value) &&
+                    Objects.equals(type, that.type);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(value, type);
+        }
     }
 
     private String userName;
@@ -306,7 +322,7 @@ public final class ScimUser extends ScimCore {
 
     private String profileUrl;
 
-    private String title;;
+    private String title;
 
     private String userType;
 
@@ -329,6 +345,10 @@ public final class ScimUser extends ScimCore {
     private String salt = null;
 
     private Date passwordLastModified = null;
+
+    private Long previousLogonTime = null;
+
+    private Long lastLogonTime = null;
 
     @JsonProperty
     private String password;
@@ -387,7 +407,7 @@ public final class ScimUser extends ScimCore {
     }
 
     public void setGroups(Collection<Group> groups) {
-        this.groups = new LinkedHashSet<Group>(groups);
+        this.groups = new LinkedHashSet<>(groups);
     }
 
     public List<PhoneNumber> getPhoneNumbers() {
@@ -396,11 +416,10 @@ public final class ScimUser extends ScimCore {
 
     public void setPhoneNumbers(List<PhoneNumber> phoneNumbers) {
         if (phoneNumbers!=null && phoneNumbers.size()>0) {
-            ArrayList<PhoneNumber> list = new ArrayList<PhoneNumber>();
-            list.addAll(phoneNumbers);
+            ArrayList<PhoneNumber> list = new ArrayList<>(phoneNumbers);
             for (int i=(list.size()-1); i>=0; i--) {
                 PhoneNumber pn = list.get(i);
-                if (pn==null || (!StringUtils.hasText(pn.getValue()))) {
+                if (pn==null || (!hasText(pn.getValue()))) {
                     list.remove(i);
                 }
             }
@@ -417,7 +436,7 @@ public final class ScimUser extends ScimCore {
         this.displayName = displayName;
     }
 
-    public String getNickName() {
+    String getNickName() {
         return nickName;
     }
 
@@ -425,7 +444,7 @@ public final class ScimUser extends ScimCore {
         this.nickName = nickName;
     }
 
-    public String getProfileUrl() {
+    String getProfileUrl() {
         return profileUrl;
     }
 
@@ -449,7 +468,7 @@ public final class ScimUser extends ScimCore {
         this.userType = userType;
     }
 
-    public String getPreferredLanguage() {
+    String getPreferredLanguage() {
         return preferredLanguage;
     }
 
@@ -465,7 +484,7 @@ public final class ScimUser extends ScimCore {
         this.locale = locale;
     }
 
-    public String getTimezone() {
+    String getTimezone() {
         return timezone;
     }
 
@@ -536,6 +555,22 @@ public final class ScimUser extends ScimCore {
         this.passwordLastModified = passwordLastModified;
     }
 
+    public Long getLastLogonTime() {
+        return lastLogonTime;
+    }
+
+    public void setLastLogonTime(Long lastLogonTime) {
+        this.lastLogonTime = lastLogonTime;
+    }
+
+    public Long getPreviousLogonTime() {
+        return previousLogonTime;
+    }
+
+    public void setPreviousLogonTime(Long previousLogonTime) {
+        this.previousLogonTime = previousLogonTime;
+    }
+
     @JsonIgnore
     public String getPrimaryEmail() {
         if (getEmails() == null || getEmails().isEmpty()) {
@@ -600,7 +635,7 @@ public final class ScimUser extends ScimCore {
      * don't need yet
      */
     public void addEmail(String newEmail) {
-        Assert.hasText(newEmail);
+        Assert.hasText(newEmail, "Attempted to add null or empty email string to user.");
 
         if (emails == null) {
             emails = new ArrayList<>(1);
@@ -627,7 +662,7 @@ public final class ScimUser extends ScimCore {
         }
 
         if (phoneNumbers == null) {
-            phoneNumbers = new ArrayList<PhoneNumber>(1);
+            phoneNumbers = new ArrayList<>(1);
         }
         for (PhoneNumber phoneNumber : phoneNumbers) {
             if (phoneNumber.value.equals(newPhoneNumber) && phoneNumber.getType() == null) {
@@ -644,8 +679,8 @@ public final class ScimUser extends ScimCore {
      * Creates a word list from the user data for use in password checking
      * implementations
      */
-    public List<String> wordList() {
-        List<String> words = new ArrayList<String>();
+    List<String> wordList() {
+        List<String> words = new ArrayList<>();
 
         if (userName != null) {
             words.add(userName);
@@ -670,6 +705,129 @@ public final class ScimUser extends ScimCore {
         }
 
         return words;
+    }
+
+    @Override
+    public void patch(ScimUser patch) {
+        //Delete Attributes specified in Meta.attributes
+        String[] attributes = ofNullable(patch.getMeta().getAttributes()).orElse(new String[0]);
+        for (String attribute : attributes) {
+            switch (attribute.toUpperCase()) {
+                case "USERNAME":
+                    if (!hasText(patch.getUserName())) {
+                        throw new IllegalArgumentException("Can not drop username, field is required.");
+                    }
+                    setUserName(null);
+                    break;
+                case "EMAILS":
+                    setEmails(new ArrayList<>());
+                    break;
+                case "PHONENUMBERS":
+                    setPhoneNumbers(new ArrayList<>());
+                    break;
+                case "DISPLAYNAME":
+                    setDisplayName(null);
+                    break;
+                case "NICKNAME":
+                    setNickName(null);
+                    break;
+                case "PROFILEURL":
+                    setProfileUrl(null);
+                    break;
+                case "TITLE":
+                    setTitle(null);
+                    break;
+                case "PREFERREDLANGUAGE":
+                    setPreferredLanguage(null);
+                    break;
+                case "LOCALE":
+                    setLocale(null);
+                    break;
+                case "TIMEZONE":
+                    setTimezone(null);
+                    break;
+                case "NAME":
+                    setName(new Name());
+                    break;
+                case "NAME.FAMILYNAME":
+                    ofNullable(getName()).ifPresent(name -> name.setFamilyName(null));
+                    break;
+                case "NAME.GIVENNAME":
+                    ofNullable(getName()).ifPresent(name -> name.setGivenName(null));
+                    break;
+                case "NAME.FORMATTED":
+                    ofNullable(getName()).ifPresent(name -> name.setFormatted(null));
+                    break;
+                case "NAME.HONORIFICPREFIX":
+                    ofNullable(getName()).ifPresent(name -> name.setHonorificPrefix(null));
+                    break;
+                case "NAME.HONORIFICSUFFIX":
+                    ofNullable(getName()).ifPresent(name -> name.setHonorificSuffix(null));
+                    break;
+                case "NAME.MIDDLENAME":
+                    ofNullable(getName()).ifPresent(name -> name.setMiddleName(null));
+                    break;
+                default:
+                    throw new IllegalArgumentException(String.format("Attribute %s cannot be removed using \"Meta.attributes\"", attribute));
+            }
+        }
+
+        //Merge simple Attributes, that are stored
+        ofNullable(patch.getUserName()).ifPresent(this::setUserName);
+
+        setActive(patch.isActive());
+        setVerified(patch.isVerified());
+
+        //Merge complex attributes
+        ScimUser.Name patchName = patch.getName();
+        if (patchName != null) {
+            ScimUser.Name currentName = ofNullable(getName()).orElse(new Name());
+            ofNullable(patchName.getFamilyName()).ifPresent(currentName::setFamilyName);
+            ofNullable(patchName.getGivenName()).ifPresent(currentName::setGivenName);
+            ofNullable(patchName.getMiddleName()).ifPresent(currentName::setMiddleName);
+            ofNullable(patchName.getFormatted()).ifPresent(currentName::setFormatted);
+            ofNullable(patchName.getHonorificPrefix()).ifPresent(currentName::setHonorificPrefix);
+            ofNullable(patchName.getHonorificSuffix()).ifPresent(currentName::setHonorificSuffix);
+            setName(currentName);
+        }
+
+        ofNullable(patch.getDisplayName()).ifPresent(
+                this::setDisplayName
+        );
+        ofNullable(patch.getNickName()).ifPresent(this::setNickName);
+        ofNullable(patch.getTimezone()).ifPresent(this::setTimezone);
+        ofNullable(patch.getTitle()).ifPresent(this::setTitle);
+        ofNullable(patch.getProfileUrl()).ifPresent(this::setProfileUrl);
+        ofNullable(patch.getLocale()).ifPresent(this::setLocale);
+        ofNullable(patch.getPreferredLanguage()).ifPresent(this::setPreferredLanguage);
+
+        //Only one email stored, use Primary or first.
+        if (patch.getEmails() != null && patch.getEmails().size()>0) {
+            ScimUser.Email primary = null;
+            for (ScimUser.Email email : patch.getEmails()) {
+                if (email.isPrimary()) {
+                   primary = email;
+                   break;
+                }
+            }
+            List<Email> currentEmails = ofNullable(getEmails()).orElse(new ArrayList());
+            if (primary != null) {
+                for (Email e : currentEmails) {
+                    e.setPrimary(false);
+                }
+            }
+            currentEmails.addAll(patch.getEmails());
+            setEmails(currentEmails);
+        }
+
+        //Only one PhoneNumber stored, use first, as primary does not exist
+        if (patch.getPhoneNumbers() != null && patch.getPhoneNumbers().size()>0) {
+            List<PhoneNumber> current = ofNullable(getPhoneNumbers()).orElse(new ArrayList<>());
+            for (int index=0; index<patch.getPhoneNumbers().size(); index++) {
+                current.add(index, patch.getPhoneNumbers().get(index));
+            }
+            setPhoneNumbers(current);
+        }
     }
 
 }

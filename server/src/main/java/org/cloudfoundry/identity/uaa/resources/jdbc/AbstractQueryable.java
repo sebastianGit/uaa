@@ -1,46 +1,42 @@
-/*******************************************************************************
- *     Cloud Foundry
- *     Copyright (c) [2009-2016] Pivotal Software, Inc. All Rights Reserved.
- *
- *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
- *     You may not use this product except in compliance with the License.
- *
- *     This product includes a number of subcomponents with
- *     separate copyright notices and license terms. Your use of these
- *     subcomponents is subject to the terms and conditions of the
- *     subcomponent's license, as noted in the LICENSE file.
- *******************************************************************************/
 package org.cloudfoundry.identity.uaa.resources.jdbc;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.cloudfoundry.identity.uaa.resources.Queryable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.util.StringUtils;
 
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import static com.google.common.primitives.Ints.tryParse;
 
 public abstract class AbstractQueryable<T> implements Queryable<T> {
 
-    private NamedParameterJdbcTemplate jdbcTemplate;
+    private NamedParameterJdbcTemplate namedParameterJdbcTemplate;
 
     private JdbcPagingListFactory pagingListFactory;
 
     protected RowMapper<T> rowMapper;
 
-    private final Log logger = LogFactory.getLog(getClass());
+    private final Logger logger = LoggerFactory.getLogger(getClass());
 
-    private SearchQueryConverter queryConverter = new SimpleSearchQueryConverter();
+    private SearchQueryConverter queryConverter;
 
     private int pageSize = 200;
 
-    protected AbstractQueryable(JdbcTemplate jdbcTemplate, JdbcPagingListFactory pagingListFactory,
-                    RowMapper<T> rowMapper) {
-        this.jdbcTemplate = new NamedParameterJdbcTemplate(jdbcTemplate);
+    protected AbstractQueryable(final JdbcTemplate jdbcTemplate,
+                                final JdbcPagingListFactory pagingListFactory,
+                                final RowMapper<T> rowMapper) {
+        this.namedParameterJdbcTemplate = new NamedParameterJdbcTemplate(jdbcTemplate);
         this.pagingListFactory = pagingListFactory;
         this.rowMapper = rowMapper;
+
+        queryConverter = new SimpleSearchQueryConverter();
     }
 
     public void setQueryConverter(SearchQueryConverter queryConverter) {
@@ -62,37 +58,25 @@ public abstract class AbstractQueryable<T> implements Queryable<T> {
         return pageSize;
     }
 
-    public int delete(String filter) {
-        SearchQueryConverter.ProcessedFilter where = queryConverter.convert(filter, null, false);
-        logger.debug("Filtering groups with SQL: " + where);
-        try {
-            String completeSql = "DELETE FROM "+getTableName() + " WHERE " + where.getSql();
-            logger.debug("delete sql: " + completeSql + ", params: " + where.getParams());
-            return jdbcTemplate.update(completeSql, where.getParams());
-        } catch (DataAccessException e) {
-            logger.debug("Filter '" + filter + "' generated invalid SQL", e);
-            throw new IllegalArgumentException("Invalid delete filter: " + filter);
-        }
+    @Override
+    public List<T> query(String filter, String zoneId) {
+        return query(filter, null, true, zoneId);
     }
 
     @Override
-    public List<T> query(String filter) {
-        return query(filter, null, true);
-    }
+    public List<T> query(String filter, String sortBy, boolean ascending, String zoneId) {
+        validateOrderBy(queryConverter.map(sortBy));
 
-    @Override
-    public List<T> query(String filter, String sortBy, boolean ascending) {
-        SearchQueryConverter.ProcessedFilter where = queryConverter.convert(filter, sortBy, ascending);
+        SearchQueryConverter.ProcessedFilter where = queryConverter.convert(filter, sortBy, ascending, zoneId);
         logger.debug("Filtering groups with SQL: " + where);
         List<T> result;
         try {
-            String completeSql = getQuerySQL(filter, where);
+            String completeSql = getQuerySQL(where);
             logger.debug("complete sql: " + completeSql + ", params: " + where.getParams());
             if (pageSize > 0 && pageSize < Integer.MAX_VALUE) {
                 result = pagingListFactory.createJdbcPagingList(completeSql, where.getParams(), rowMapper, pageSize);
-            }
-            else {
-                result = jdbcTemplate.query(completeSql, where.getParams(), rowMapper);
+            } else {
+                result = namedParameterJdbcTemplate.query(completeSql, where.getParams(), rowMapper);
             }
             return result;
         } catch (DataAccessException e) {
@@ -101,21 +85,44 @@ public abstract class AbstractQueryable<T> implements Queryable<T> {
         }
     }
 
-    protected String getQuerySQL(String filter, SearchQueryConverter.ProcessedFilter where) {
-        if (filter == null || filter.trim().length()==0) {
-            return getBaseSqlQuery();
-        }
+    private String getQuerySQL(SearchQueryConverter.ProcessedFilter where) {
         if (where.hasOrderBy()) {
-            return getBaseSqlQuery() + " where (" + where.getSql().replace(where.ORDER_BY, ")"+where.ORDER_BY);
+            return getBaseSqlQuery() + " where (" + where.getSql().replace(where.ORDER_BY, ")" + where.ORDER_BY);
         } else {
             return getBaseSqlQuery() + " where (" + where.getSql() + ")";
         }
     }
 
     protected abstract String getBaseSqlQuery();
+
     protected abstract String getTableName();
 
-    public SearchQueryConverter getQueryConverter() {
-        return queryConverter;
+    protected abstract void validateOrderBy(String orderBy) throws IllegalArgumentException;
+
+    protected void validateOrderBy(final String csvRequestedOrderBy, final String csvAllowedFields) throws IllegalArgumentException {
+        if (!StringUtils.hasText(csvRequestedOrderBy)) {
+            return;
+        }
+
+        Set<String> lowerCaseRequestedOrderBy = StringUtils.commaDelimitedListToSet(csvRequestedOrderBy)
+                .stream()
+                .map(String::toLowerCase)
+                .map(String::trim)
+                .collect(Collectors.toSet());
+
+        Set<String> lowerCaseAllowedFields = StringUtils.commaDelimitedListToSet(csvAllowedFields)
+                .stream()
+                .map(String::toLowerCase)
+                .map(String::trim)
+                .collect(Collectors.toSet());
+
+        lowerCaseRequestedOrderBy
+                .stream()
+                .filter(s -> null == tryParse(s)) // non-integers
+                .filter(s -> !lowerCaseAllowedFields.contains(s))
+                .findFirst()
+                .ifPresent(s -> {
+                    throw new IllegalArgumentException("Invalid sort field: " + s);
+                });
     }
 }

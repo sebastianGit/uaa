@@ -21,8 +21,8 @@ import java.util.Map.Entry;
 
 import javax.servlet.http.HttpServletRequest;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.BeanNameAware;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
@@ -42,7 +42,7 @@ import org.springframework.util.Assert;
  */
 public final class UaaRequestMatcher implements RequestMatcher, BeanNameAware {
 
-    private static final Log logger = LogFactory.getLog(UaaRequestMatcher.class);
+    private static final Logger logger = LoggerFactory.getLogger(UaaRequestMatcher.class);
 
     private final String path;
 
@@ -99,11 +99,10 @@ public final class UaaRequestMatcher implements RequestMatcher, BeanNameAware {
 
     @Override
     public boolean matches(HttpServletRequest request) {
-        String message = "";
-        if (logger.isDebugEnabled()) {
-            message = request.getRequestURI() + "'; '" + request.getContextPath() + path + "' with parameters="
-                            + parameters + " and headers " + expectedHeaders;
-            logger.debug("["+name+"] Checking match of request : '" + message);
+        String message = request.getRequestURI() + "'; '" + request.getContextPath() + path + "' with parameters="
+            + parameters + " and headers " + expectedHeaders;
+        if (logger.isTraceEnabled()) {
+            logger.trace("["+name+"] Checking match of request : '" + message);
         }
 
         if (!request.getRequestURI().startsWith(request.getContextPath() + path)) {
@@ -141,7 +140,6 @@ public final class UaaRequestMatcher implements RequestMatcher, BeanNameAware {
 
     private boolean matchesHeader(String requestValue, List<String> expectedValues) {
         for (String headerValue : expectedValues) {
-            //TODO - Spring Security Oauth2 v2 upgrade - bearer changed capitalization
             if ("bearer ".equalsIgnoreCase(headerValue)) {
                 //case insensitive for Authorization: Bearer match
                 if (requestValue == null || !requestValue.toLowerCase().startsWith(headerValue)) {

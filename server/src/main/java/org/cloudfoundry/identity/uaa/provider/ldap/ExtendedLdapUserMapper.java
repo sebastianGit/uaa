@@ -13,9 +13,10 @@
 package org.cloudfoundry.identity.uaa.provider.ldap;
 
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.cloudfoundry.identity.uaa.provider.ldap.extension.ExtendedLdapUserImpl;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ldap.core.DirContextAdapter;
 import org.springframework.ldap.core.DirContextOperations;
 import org.springframework.security.core.GrantedAuthority;
@@ -32,7 +33,7 @@ import java.util.Map;
 import static org.cloudfoundry.identity.uaa.provider.ldap.extension.SpringSecurityLdapTemplate.DN_KEY;
 
 public class ExtendedLdapUserMapper extends LdapUserDetailsMapper {
-    private static final Log logger = LogFactory.getLog(ExtendedLdapUserMapper.class);
+    private static final Logger logger = LoggerFactory.getLogger(ExtendedLdapUserMapper.class);
     public static final String SUBSTITUTE_MAIL_ATTR_NAME = "substitute-mail-attribute";
     private String mailAttributeName = "mail";
     private String givenNameAttributeName;
@@ -40,6 +41,7 @@ public class ExtendedLdapUserMapper extends LdapUserDetailsMapper {
     private String phoneNumberAttributeName;
     private String mailSubstitute = null;
     private boolean mailSubstituteOverrides = false;
+    private String emailVerifiedAttributeName = null;
 
     @Override
     public UserDetails mapUserFromContext(DirContextOperations ctx, String username, Collection<? extends GrantedAuthority> authorities) {
@@ -79,6 +81,7 @@ public class ExtendedLdapUserMapper extends LdapUserDetailsMapper {
         result.setGivenNameAttributeName(givenNameAttributeName);
         result.setFamilyNameAttributeName(familyNameAttributeName);
         result.setPhoneNumberAttributeName(phoneNumberAttributeName);
+        result.setEmailVerifiedAttributeName(emailVerifiedAttributeName);
         return result;
     }
 
@@ -157,5 +160,13 @@ public class ExtendedLdapUserMapper extends LdapUserDetailsMapper {
 
     public void setMailSubstituteOverridesLdap(boolean mailSubstituteOverridesLdap) {
         this.mailSubstituteOverrides = mailSubstituteOverridesLdap;
+    }
+
+    public String getEmailVerifiedAttributeName() {
+        return emailVerifiedAttributeName;
+    }
+
+    public void setEmailVerifiedAttributeName(String emailVerifiedAttributeName) {
+        this.emailVerifiedAttributeName = emailVerifiedAttributeName;
     }
 }

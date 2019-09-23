@@ -1,48 +1,56 @@
-/*******************************************************************************
- *     Cloud Foundry
- *     Copyright (c) [2009-2015] Pivotal Software, Inc. All Rights Reserved.
- *
- *     This product is licensed to you under the Apache License, Version 2.0 (the "License").
- *     You may not use this product except in compliance with the License.
- *
- *     This product includes a number of subcomponents with
- *     separate copyright notices and license terms. Your use of these
- *     subcomponents is subject to the terms and conditions of the
- *     subcomponent's license, as noted in the LICENSE file.
- *******************************************************************************/
 package org.cloudfoundry.identity.uaa.mock.zones;
 
-import org.cloudfoundry.identity.uaa.mock.InjectedMockContextTest;
+import org.cloudfoundry.identity.uaa.DefaultTestContext;
 import org.cloudfoundry.identity.uaa.mock.util.MockMvcUtils;
-import org.junit.After;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.web.FilterChainProxy;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.xpath;
 
-public class DisableInternalUserManagementFilterMockMvcTests extends InjectedMockContextTest{
+@DefaultTestContext
+class DisableInternalUserManagementFilterMockMvcTests {
 
-    @After
-    public void resetInternalUserManagement() {
-        MockMvcUtils.setDisableInternalUserManagement(false, getWebApplicationContext());
+    @Autowired
+    WebApplicationContext webApplicationContext;
+    private MockMvc mockMvc;
+
+    @Value("${disableInternalUserManagement:false}")
+    private boolean disableInternalUserManagement;
+
+    @BeforeEach
+    void setUp(@Autowired FilterChainProxy springSecurityFilterChain) {
+        mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext)
+                .addFilter(springSecurityFilterChain)
+                .build();
+
+        MockMvcUtils.setDisableInternalUserManagement(webApplicationContext, true);
+    }
+
+    @AfterEach
+    void resetInternalUserManagement() {
+        MockMvcUtils.setDisableInternalUserManagement(webApplicationContext, disableInternalUserManagement);
     }
 
     @Test
-    public void createAccountNotEnabled() throws Exception {
-        MockMvcUtils.setDisableInternalUserManagement(true, getWebApplicationContext());
-
-        getMockMvc().perform(get("/login"))
-            .andExpect(status().isOk())
-            .andExpect(xpath("//a[@href='/create_account']").doesNotExist());
+    void createAccountNotEnabled() throws Exception {
+        mockMvc.perform(get("/login"))
+                .andExpect(status().isOk())
+                .andExpect(xpath("//a[@href='/create_account']").doesNotExist());
     }
 
     @Test
-    public void resetPasswordNotEnabled() throws Exception {
-        MockMvcUtils.setDisableInternalUserManagement(true, getWebApplicationContext());
-
-        getMockMvc().perform(get("/login"))
-            .andExpect(status().isOk())
-            .andExpect(xpath("//a[@href='/forgot_password']").doesNotExist());
+    void resetPasswordNotEnabled() throws Exception {
+        mockMvc.perform(get("/login"))
+                .andExpect(status().isOk())
+                .andExpect(xpath("//a[@href='/forgot_password']").doesNotExist());
     }
 }

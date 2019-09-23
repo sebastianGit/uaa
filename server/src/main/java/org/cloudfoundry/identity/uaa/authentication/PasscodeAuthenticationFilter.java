@@ -14,8 +14,8 @@
 package org.cloudfoundry.identity.uaa.authentication;
 
 import com.fasterxml.jackson.core.type.TypeReference;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.cloudfoundry.identity.uaa.codestore.ExpiringCode;
 import org.cloudfoundry.identity.uaa.codestore.ExpiringCodeStore;
 import org.cloudfoundry.identity.uaa.constants.OriginKeys;
@@ -24,7 +24,6 @@ import org.cloudfoundry.identity.uaa.user.UaaUser;
 import org.cloudfoundry.identity.uaa.user.UaaUserDatabase;
 import org.cloudfoundry.identity.uaa.util.JsonUtils;
 import org.cloudfoundry.identity.uaa.zone.IdentityZoneHolder;
-import org.hsqldb.lib.StringUtil;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -35,6 +34,7 @@ import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.oauth2.provider.OAuth2RequestFactory;
+import org.springframework.util.StringUtils;
 
 import javax.servlet.FilterChain;
 import javax.servlet.FilterConfig;
@@ -51,6 +51,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.cloudfoundry.identity.uaa.oauth.token.TokenConstants.GRANT_TYPE_PASSWORD;
+
 /**
  * Authentication filter to verify one time passwords with what's cached in the
  * one time password store.
@@ -59,7 +61,7 @@ import java.util.Set;
  */
 public class PasscodeAuthenticationFilter extends BackwardsCompatibleTokenEndpointAuthenticationFilter {
 
-    private final Log logger = LogFactory.getLog(getClass());
+    private final Logger logger = LoggerFactory.getLogger(getClass());
 
     private List<String> parameterNames = Collections.emptyList();
 
@@ -68,7 +70,7 @@ public class PasscodeAuthenticationFilter extends BackwardsCompatibleTokenEndpoi
             new ExpiringCodeAuthenticationManager(
                 uaaUserDatabase,
                 authenticationManager,
-                LogFactory.getLog(PasscodeAuthenticationFilter.class),
+                LoggerFactory.getLogger(PasscodeAuthenticationFilter.class),
                 expiringCodeStore,
                 Collections.singleton(HttpMethod.POST.toString())),
             oAuth2RequestFactory);
@@ -153,13 +155,13 @@ public class PasscodeAuthenticationFilter extends BackwardsCompatibleTokenEndpoi
     }
 
     protected static class ExpiringCodeAuthenticationManager implements AuthenticationManager {
-        private final Log logger;
+        private final Logger logger;
         private final ExpiringCodeStore expiringCodeStore;
         private final Set<String> methods;
         private final AuthenticationManager parent;
         private final UaaUserDatabase uaaUserDatabase;
 
-        public ExpiringCodeAuthenticationManager(UaaUserDatabase uaaUserDatabase, AuthenticationManager parent, Log logger, ExpiringCodeStore expiringCodeStore, Set<String> methods) {
+        public ExpiringCodeAuthenticationManager(UaaUserDatabase uaaUserDatabase, AuthenticationManager parent, Logger logger, ExpiringCodeStore expiringCodeStore, Set<String> methods) {
             this.logger = logger;
             this.expiringCodeStore = expiringCodeStore;
             this.methods = methods;
@@ -168,7 +170,7 @@ public class PasscodeAuthenticationFilter extends BackwardsCompatibleTokenEndpoi
         }
 
         protected ExpiringCode doRetrieveCode(String code) {
-            return expiringCodeStore.retrieveCode(code);
+            return expiringCodeStore.retrieveCode(code, IdentityZoneHolder.get().getId());
         }
 
         @Override
@@ -184,7 +186,7 @@ public class PasscodeAuthenticationFilter extends BackwardsCompatibleTokenEndpoi
                 }
 
                 String passcode = expiringCodeAuthentication.getPasscode();
-                if (StringUtil.isEmpty(passcode)) {
+                if (StringUtils.isEmpty(passcode)) {
                     throw new InsufficientAuthenticationException("Passcode information is missing.");
                 }
 
@@ -238,7 +240,7 @@ public class PasscodeAuthenticationFilter extends BackwardsCompatibleTokenEndpoi
     @Override
     protected Authentication extractCredentials(HttpServletRequest request) {
         String grantType = request.getParameter("grant_type");
-        if (grantType != null && grantType.equals("password")) {
+        if (grantType != null && grantType.equals(GRANT_TYPE_PASSWORD)) {
             Map<String, String> credentials = getCredentials(request);
             String passcode = credentials.get("passcode");
             if (passcode!=null) {

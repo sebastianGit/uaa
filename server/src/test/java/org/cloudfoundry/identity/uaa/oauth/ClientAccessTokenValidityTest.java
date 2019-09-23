@@ -1,0 +1,119 @@
+package org.cloudfoundry.identity.uaa.oauth;
+
+import org.cloudfoundry.identity.uaa.security.PollutionPreventionExtension;
+import org.cloudfoundry.identity.uaa.zone.IdentityZone;
+import org.cloudfoundry.identity.uaa.zone.IdentityZoneConfiguration;
+import org.cloudfoundry.identity.uaa.zone.MultitenantClientServices;
+import org.cloudfoundry.identity.uaa.zone.TokenPolicy;
+import org.cloudfoundry.identity.uaa.zone.beans.IdentityZoneManager;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.oauth2.common.util.RandomValueStringGenerator;
+import org.springframework.security.oauth2.provider.ClientDetails;
+import org.springframework.security.oauth2.provider.ClientRegistrationException;
+
+import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.nullValue;
+import static org.junit.Assert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+class ClientAccessTokenValidityTest {
+
+    @Nested
+    @ExtendWith(PollutionPreventionExtension.class)
+    @ExtendWith(MockitoExtension.class)
+    class GetValiditySeconds {
+
+        @Mock
+        private MultitenantClientServices mockMultitenantClientServices;
+
+        @Mock
+        private IdentityZoneManager mockIdentityZoneManager;
+
+        @InjectMocks
+        private ClientAccessTokenValidity clientAccessTokenValidity;
+
+        @Mock
+        private ClientDetails mockClientDetails;
+
+        private String currentIdentityZoneId;
+
+        @BeforeEach
+        void setUp() {
+            currentIdentityZoneId = "currentIdentityZoneId-" + new RandomValueStringGenerator().generate();
+            when(mockIdentityZoneManager.getCurrentIdentityZoneId()).thenReturn(currentIdentityZoneId);
+        }
+
+        @Test
+        void whenClientPresent() {
+            when(mockMultitenantClientServices.loadClientByClientId("clientId", currentIdentityZoneId)).thenReturn(mockClientDetails);
+            when(mockClientDetails.getAccessTokenValiditySeconds()).thenReturn(9999);
+
+            assertThat(clientAccessTokenValidity.getValiditySeconds("clientId"), is(9999));
+        }
+
+        @Test
+        void whenClientPresent_doesNotHaveATokenValiditySet() {
+            when(mockMultitenantClientServices.loadClientByClientId("clientId", currentIdentityZoneId)).thenReturn(mockClientDetails);
+            when(mockClientDetails.getAccessTokenValiditySeconds()).thenReturn(null);
+
+            assertThat(clientAccessTokenValidity.getValiditySeconds("clientId"), is(nullValue()));
+        }
+
+        @Test
+        void whenNoClientPresent_ReturnsNull() {
+            when(mockMultitenantClientServices.loadClientByClientId("notExistingClientId", currentIdentityZoneId))
+                    .thenThrow(ClientRegistrationException.class);
+
+            assertThat(clientAccessTokenValidity.getValiditySeconds("notExistingClientId"), is(nullValue()));
+        }
+
+        @Test
+        void whenClientPresent_ButUnableToRetrieveTheClient() {
+            when(mockMultitenantClientServices.loadClientByClientId("clientId", currentIdentityZoneId))
+                    .thenThrow(RuntimeException.class);
+
+            assertThrows(RuntimeException.class,
+                    () -> clientAccessTokenValidity.getValiditySeconds("clientId"));
+        }
+    }
+
+    @Nested
+    @ExtendWith(PollutionPreventionExtension.class)
+    @ExtendWith(MockitoExtension.class)
+    class GetZoneValiditySeconds {
+        @Mock
+        private IdentityZoneManager mockIdentityZoneManager;
+
+        @InjectMocks
+        private ClientAccessTokenValidity clientAccessTokenValidity;
+
+        @ParameterizedTest
+        @ValueSource(ints = {
+                0,
+                -1,
+                97531
+        })
+        void zoneValidityReturnsAccessTokenValidity(final int zoneValiditySeconds) {
+            IdentityZone mockIdentityZone = mock(IdentityZone.class);
+            IdentityZoneConfiguration mockIdentityZoneConfiguration = mock(IdentityZoneConfiguration.class);
+            TokenPolicy mockTokenPolicy = mock(TokenPolicy.class);
+
+            when(mockIdentityZoneManager.getCurrentIdentityZone()).thenReturn(mockIdentityZone);
+            when(mockIdentityZone.getConfig()).thenReturn(mockIdentityZoneConfiguration);
+            when(mockIdentityZoneConfiguration.getTokenPolicy()).thenReturn(mockTokenPolicy);
+            when(mockTokenPolicy.getAccessTokenValidity()).thenReturn(zoneValiditySeconds);
+
+            assertThat(clientAccessTokenValidity.getZoneValiditySeconds(), is(zoneValiditySeconds));
+        }
+    }
+}
