@@ -41,6 +41,18 @@ public interface ScimGroupMembershipManager {
             final String memberId,
             final boolean transitive,
             final String zoneId) throws ScimResourceNotFoundException;
+    
+    /**
+     * Retrieve all groups that the given members belongs to
+     *
+     * @param transitive true means indirect/transitive membership is also
+     *                   processed (nested groups)
+     */
+    public Set<ScimGroup> getGroupsWithMembers(
+    		final List<String> memberIds,
+    		boolean transitive,
+    		final String zoneId)
+    		throws ScimResourceNotFoundException;
 
     /**
      * Retrieve a particular member's membership details

@@ -16,6 +16,9 @@ import org.cloudfoundry.identity.uaa.oauth.client.ClientConstants;
 import org.cloudfoundry.identity.uaa.oauth.token.TokenConstants;
 import org.cloudfoundry.identity.uaa.provider.IdentityProvider;
 import org.cloudfoundry.identity.uaa.provider.IdentityProviderProvisioning;
+import org.cloudfoundry.identity.uaa.scim.ScimGroup;
+import org.cloudfoundry.identity.uaa.scim.ScimGroupMembershipManager;
+import org.cloudfoundry.identity.uaa.scim.ScimGroupProvisioning;
 import org.cloudfoundry.identity.uaa.security.beans.SecurityContextAccessor;
 import org.cloudfoundry.identity.uaa.user.UaaUser;
 import org.cloudfoundry.identity.uaa.user.UaaUserDatabase;
@@ -40,6 +43,7 @@ import org.springframework.security.oauth2.provider.TokenRequest;
 import org.springframework.security.oauth2.provider.client.BaseClientDetails;
 import org.springframework.security.oauth2.provider.request.DefaultOAuth2RequestFactory;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -50,11 +54,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import static java.util.Collections.emptySet;
 import static java.util.Collections.unmodifiableMap;
 import static java.util.Optional.ofNullable;
 import static org.cloudfoundry.identity.uaa.oauth.client.ClientConstants.REQUIRED_USER_GROUPS;
+import static org.cloudfoundry.identity.uaa.oauth.client.ClientConstants.RESOLVABLE_USER_GROUPS;
 import static org.cloudfoundry.identity.uaa.oauth.token.TokenConstants.GRANT_TYPE_CLIENT_CREDENTIALS;
 import static org.springframework.security.oauth2.common.util.OAuth2Utils.GRANT_TYPE;
 
@@ -89,16 +95,24 @@ public class UaaAuthorizationRequestManager implements OAuth2RequestFactory {
     private UaaUserDatabase uaaUserDatabase;
 
     private IdentityProviderProvisioning providerProvisioning;
+    
+    private ScimGroupProvisioning scimGroupProvisioning;
+    
+    private ScimGroupMembershipManager scimGroupMembershipManager;
 
     public UaaAuthorizationRequestManager(final MultitenantClientServices clientDetailsService,
                                           final SecurityContextAccessor securityContextAccessor,
                                           final UaaUserDatabase userDatabase,
-                                          final IdentityProviderProvisioning providerProvisioning) {
+                                          final IdentityProviderProvisioning providerProvisioning,
+                                          final ScimGroupProvisioning scimGroupProvisioning,
+                                          final ScimGroupMembershipManager scimGroupMembershipManager) {
         this.clientDetailsService = clientDetailsService;
         this.securityContextAccessor = securityContextAccessor;
         this.uaaUserDatabase = userDatabase;
         this.requestFactory = new DefaultOAuth2RequestFactory(clientDetailsService);
         this.providerProvisioning = providerProvisioning;
+        this.scimGroupProvisioning = scimGroupProvisioning;
+        this.scimGroupMembershipManager = scimGroupMembershipManager;
     }
 
     /**
@@ -160,6 +174,27 @@ public class UaaAuthorizationRequestManager implements OAuth2RequestFactory {
             Collection<? extends GrantedAuthority> authorities = uaaUser.getAuthorities();
             //validate scopes
             scopes = checkUserScopes(scopes, authorities, clientDetails);
+            
+            //do evaluate "resolvable_user_groups"
+            Collection<String> resolvableUserGroups = ofNullable((Collection<String>) clientDetails.getAdditionalInformation().get(RESOLVABLE_USER_GROUPS)).orElse(emptySet());
+            if (!resolvableUserGroups.isEmpty()) {
+            	//calculate the intersection between resolvable_user_groups and the groups (here:authorities) the user is a member of (check of clientDetails against authorities does not hurt)
+            	Set<String> usersResolvableUserGroups = checkUserScopes(new HashSet<String>(resolvableUserGroups), authorities, clientDetails);
+            	//for all values in "usersResolvableUserGroups" get the groupId via JdbcGroupProvision and add those ids to the list scopeIds
+            	//take all values in the list and call uaaUserDatabase.
+            	List<String> scopeIds = new ArrayList<String>();
+            	for (String scope:usersResolvableUserGroups) {
+            		scopeIds.add(scimGroupProvisioning.getByName(scope, IdentityZoneHolder.get().getId()).getId());
+            	}
+            	//transitively resolve groups and add them to original set of usersResolveableGroups
+            	Set<ScimGroup> transitivelyResolvedGroups = scimGroupMembershipManager.getGroupsWithMembers(scopeIds, true, IdentityZoneHolder.get().getId());
+            	Set<String> transitivelyResolvedScopes = transitivelyResolvedGroups.stream().map(g ->g.getDisplayName()).collect(Collectors.toSet());
+            	transitivelyResolvedScopes.addAll(usersResolvableUserGroups);
+            	//reduce scopes contain only the scopes that had been calculated based on the resolvableUserGroups resolved in the user's context
+            	//the construction ensures that the "new scopes" set here are a subset of the "old scopes", thus no priviledge escalation possible.
+            	scopes.retainAll(transitivelyResolvedScopes);
+            }
+            
             //check client IDP relationship - allowed providers
             checkClientIdpAuthorization(clientDetails, uaaUser);
         }

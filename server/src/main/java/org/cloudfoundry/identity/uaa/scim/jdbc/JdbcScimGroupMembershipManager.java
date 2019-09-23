@@ -184,6 +184,22 @@ public class JdbcScimGroupMembershipManager implements ScimGroupMembershipManage
         }
         return new HashSet<>(results);
     }
+    
+    @Override
+    public Set<ScimGroup> getGroupsWithMembers(final List<String> memberIds, boolean transitive, final String zoneId)
+    		throws ScimResourceNotFoundException {
+    	List<ScimGroup> results = new ArrayList<>();
+    	if (memberIds!=null) {
+    		getGroupsWithMember(results, memberIds, transitive, zoneId);
+    		for (String memberId:memberIds) {
+    			if (isUser(memberId)) {
+    				results.addAll(getDefaultUserGroups(zoneId));
+    				break; //needs to be added only once
+    			}
+    		}
+    	}
+		return new HashSet<>(results);
+    }
 
     private void getGroupsWithMember(List<ScimGroup> results, final List<String> memberId, boolean transitive, final String zoneId) {
         if (results == null) {
